@@ -1,49 +1,64 @@
-WITH consl_hdr AS (
+WITH consl AS (
   SELECT
     consl_sk,
-    cust_sk,
-    dflt_rptg_type,
-    consl_stat_dcde
+    cust_sk
   FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl
-  WHERE consl_sk = :P_CONSL_SK
-    AND consl_stat_dcde IN ('ACTIVE', 'DECODER')
-),
-user_info AS (
-  SELECT
-    GET_GENERIC_ID(:P_USER_SK, ch.cust_sk) AS v_user_sk,
-    ch.cust_sk,
-    ch.dflt_rptg_type
-  FROM consl_hdr AS ch
-),
-access_check AS (
-  SELECT
-    ui.v_user_sk,
-    ui.cust_sk,
-    ui.dflt_rptg_type,
-    COUNT(*) AS cnt_access
-  FROM user_info AS ui
-  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl_user_access cua
-    ON cua.consl_sk = :P_CONSL_SK
-   AND cua.user_sk   = ui.v_user_sk
-   AND cua.consl_user_stat_dcde = 'ACTIVE'
-  GROUP BY 1, 2, 3
-),
-acct_only AS (
-  SELECT
-    ac.ac_sk,
-    IFF(
-      ac.data_src_id = 7
-      OR (SELECT dflt_rptg_type FROM access_check) = 'WLT',
-      ac.ac_id,
-      GET_MASKED_ACID_FOR_ACSK(
-        :P_USER_SK,
-        (SELECT cust_sk FROM access_check),
-        ac.ac_sk
+  WHERE consl_sk = :p_consl_sk
+    AND consl_stat_dcde IN ('ACTIVE','DECODER')
+), 
+user_has_access AS (
+  SELECT 1 AS ok
+  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl_user_access cua
+  WHERE cua.consl_sk = (SELECT consl_sk FROM consl)
+    AND cua.user_sk   = :v_user_sk
+    AND cua.consl_user_stat_dcde = 'ACTIVE'
+)
+
+SELECT
+  ac.ac_sk,
+  ac.bk_id,
+  ac.ac_type,
+  actype.ac_type_desc,
+  ac.dtl_ac_type,
+  dtltype.dtl_ac_type_desc,
+  dtltype.ac_type_grp_dcde,
+  ac.data_src_id,
+  dtltype.prod_info_url_desc,
+  cmpnt.cmpnt_dcde,
+  cmpnt.sort_nbr
+FROM consl
+JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl_cmpnt cmpnt
+  ON cmpnt.consl_sk = consl.consl_sk
+ AND cmpnt.consl_cmpnt_stat_dcde = 'ACTIVE'
+ AND cmpnt.cmpnt_dcde = 'ACCOUNT'
+JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account ac
+  ON ac.ac_sk = cmpnt.cmpnt_sk_val
+JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_cust_ac_alias alias
+  ON alias.ac_sk   = ac.ac_sk
+ AND alias.cust_sk = consl.cust_sk
+LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_type     actype   ON ac.ac_type    = actype.ac_type
+LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_dtl_ac_type dtltype ON ac.dtl_ac_type = dtltype.dtl_ac_type
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl_cmpnt cmpnt2
+    JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account        ac2
+      ON ac2.ac_sk = cmpnt2.cmpnt_sk_val
+    WHERE cmpnt2.consl_sk = consl.consl_sk
+      AND cmpnt2.cmpnt_dcde = 'ACCOUNT'
+      AND cmpnt2.consl_cmpnt_stat_dcde = 'ACTIVE'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_cust_user acu
+        WHERE acu.ac_sk   = ac2.ac_sk
+          AND acu.cust_sk = consl.cust_sk
+          AND acu.user_sk = :v_user_sk
       )
-    ) AS ac_id,
-    alias.ac_alias,
-    IFF(
-      ac.data_src_id = 7
-      OR (SELECT dflt_rptg_type FROM access_check) = 'WLT',
-      ac.ac_desc,
-     
+)
+AND EXISTS (
+    SELECT 1
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_cust_user acu2
+    WHERE acu2.ac_sk   = ac.ac_sk
+      AND acu2.cust_sk = consl.cust_sk
+      AND acu2.user_sk = :v_user_sk
+)
+AND EXISTS (SELECT 1 FROM user_has_access);
