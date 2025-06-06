@@ -1,0 +1,49 @@
+WITH consl_hdr AS (
+  SELECT
+    consl_sk,
+    cust_sk,
+    dflt_rptg_type,
+    consl_stat_dcde
+  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl
+  WHERE consl_sk = :P_CONSL_SK
+    AND consl_stat_dcde IN ('ACTIVE', 'DECODER')
+),
+user_info AS (
+  SELECT
+    GET_GENERIC_ID(:P_USER_SK, ch.cust_sk) AS v_user_sk,
+    ch.cust_sk,
+    ch.dflt_rptg_type
+  FROM consl_hdr AS ch
+),
+access_check AS (
+  SELECT
+    ui.v_user_sk,
+    ui.cust_sk,
+    ui.dflt_rptg_type,
+    COUNT(*) AS cnt_access
+  FROM user_info AS ui
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl_user_access cua
+    ON cua.consl_sk = :P_CONSL_SK
+   AND cua.user_sk   = ui.v_user_sk
+   AND cua.consl_user_stat_dcde = 'ACTIVE'
+  GROUP BY 1, 2, 3
+),
+acct_only AS (
+  SELECT
+    ac.ac_sk,
+    IFF(
+      ac.data_src_id = 7
+      OR (SELECT dflt_rptg_type FROM access_check) = 'WLT',
+      ac.ac_id,
+      GET_MASKED_ACID_FOR_ACSK(
+        :P_USER_SK,
+        (SELECT cust_sk FROM access_check),
+        ac.ac_sk
+      )
+    ) AS ac_id,
+    alias.ac_alias,
+    IFF(
+      ac.data_src_id = 7
+      OR (SELECT dflt_rptg_type FROM access_check) = 'WLT',
+      ac.ac_desc,
+     
