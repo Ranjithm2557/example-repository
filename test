@@ -1,0 +1,319 @@
+WITH
+-- 1) pull consolidation header (cust_sk, consl_desc, dflt_rptg_type, consl_stat_dcde, data_src_id_if_needed)
+consl_hdr AS (
+  SELECT
+    c.consl_sk,
+    c.cust_sk,
+    c.consl_desc,
+    c.consl_stat_dcde,
+    u.login_id,
+    u.dflt_rptg_type
+  FROM npf_consl AS c
+  JOIN npf_user  AS u
+    ON u.user_sk = :P_USER_SK
+  WHERE c.consl_sk = :P_CONSL_SK
+    AND c.consl_stat_dcde IN ('ACTIVE','DECODER')
+),
+
+-- 2) derive v_user_sk = GENERIC ID for the calling user (Oracle used npf_security_pkg.get_generic_id)
+--    Assume you have a UDF in Snowflake called GET_GENERIC_ID(user_sk, cust_sk)
+generic_user AS (
+  SELECT
+    GET_GENERIC_ID(:P_USER_SK, ch.cust_sk) AS user_sk_generic,
+    ch.cust_sk,
+    ch.dflt_rptg_type,
+    ch.consl_stat_dcde
+  FROM consl_hdr AS ch
+),
+
+-- 3) check (implicitly) that the generic user has access to this consolidation:
+--    Oracle did a “SELECT COUNT(*) FROM npf_consl_user_access WHERE consl_sk=:P_CONSL_SK AND user_sk=v_user_sk AND stat_dcde='ACTIVE'”
+--    Here we simply pull that flag; if no row, cnt_access=0.
+consl_access AS (
+  SELECT
+    ga.user_sk_generic,
+    ga.cust_sk,
+    ga.dflt_rptg_type,
+    ga.consl_stat_dcde,
+    COALESCE(
+      (
+        SELECT 1
+        FROM npf_consl_user_access cua
+        WHERE cua.consl_sk = :P_CONSL_SK
+          AND cua.user_sk = ga.user_sk_generic
+          AND cua.consl_user_stat_dcde = 'ACTIVE'
+        LIMIT 1
+      ), 
+      0
+    ) AS has_access_flag
+  FROM generic_user AS ga
+),
+
+-- 4) “base accounts under this consolidation” + apply masking logic
+--    This mirrors the Oracle “p_accounts_only = 'Y'” branch. We call this CTE acct_only.
+acct_only AS (
+  SELECT
+    ac.ac_sk,
+    -- masking: if dflt_rptg_type='WLT' or ac.data_src_id=7, show plain AC_ID, else use a masking UDF
+    IFF(
+      ca.dflt_rptg_type = 'WLT' OR ac.data_src_id = 7,
+      ac.ac_id,
+      GET_MASKED_ACID_FOR_ACSK(:P_USER_SK, ca.cust_sk, ac.ac_sk)  -- assume this UDF exists
+    ) AS ac_id,
+    alias.ac_alias,
+    IFF(
+      ca.dflt_rptg_type = 'WLT' OR ac.data_src_id = 7,
+      ac.ac_desc,
+      GET_MASKED_AC_NAME(:P_USER_SK, ca.cust_sk, ac.ac_sk, ac.ac_desc)  -- assume this UDF exists
+    ) AS ac_desc,
+    cmp.cmpnt_dcde,
+    cmp.sort_nbr,
+    ac.data_src_id,
+    ac.bse_curr_dcde
+  FROM npf_account AS ac
+  INNER JOIN npf_consl_cmpnt AS cmp
+    ON cmp.cmpnt_sk_val = ac.ac_sk
+   AND cmp.consl_sk     = :P_CONSL_SK
+   AND cmp.cmpnt_dcde   = 'ACCOUNT'
+   AND cmp.consl_cmpnt_stat_dcde = 'ACTIVE'
+  INNER JOIN npf_consl AS c
+    ON c.consl_sk = cmp.consl_sk
+  INNER JOIN npf_cust_ac_alias AS alias
+    ON alias.cust_sk = c.cust_sk
+   AND alias.ac_sk   = ac.ac_sk
+  CROSS JOIN consl_access AS ca
+  WHERE NOT EXISTS (
+    -- if any account in this consolidation is NOT accessible by the user, return zero rows:
+    SELECT 1
+    FROM npf_account AS ac2
+    INNER JOIN npf_consl_cmpnt AS cmp2
+      ON cmp2.cmpnt_sk_val = ac2.ac_sk
+     AND cmp2.consl_sk     = :P_CONSL_SK
+     AND cmp2.cmpnt_dcde   = 'ACCOUNT'
+     AND cmp2.consl_cmpnt_stat_dcde = 'ACTIVE'
+    LEFT JOIN npf_ac_cust_user AS acu
+      ON acu.ac_sk  = ac2.ac_sk
+     AND acu.cust_sk = c.cust_sk
+     AND acu.user_sk = ca.user_sk_generic
+    WHERE ac2.ac_sk = ac.ac_sk
+      AND acu.ac_sk IS NULL
+    LIMIT 1
+  )
+),
+
+-- 5) “decoder accounts” logic for p_accounts_only = 'D' or 'N’ (counts per decoder)
+--    We follow Oracle’s “D” branch (which returns only account rows × decoder logic)
+--    and for “N”, we union with base-consol rows. Here we build a single CTE that carries
+--    “enrl_decoder_sk” per account and “tot_dec_ac” per decoder, exactly like Oracle:
+decoder_counts AS (
+  SELECT
+    ndx.DECODER_AC_SK        AS decoder_sk,
+    COUNT( ndx.DECODER_AC_SK ) 
+      OVER ( PARTITION BY ndx.DECODER_AC_SK ) AS tot_dec_ac,
+    ndx.CMPNT_DATA_SRC_ID    AS dec_data_src_id,
+    ndx.DECODER_AC_ID        AS decoder_ac_id,
+    ac.ac_sk,
+    IFF(
+      ca.dflt_rptg_type = 'WLT' OR ac.data_src_id = 7,
+      ac.ac_id,
+      GET_MASKED_ACID_FOR_ACSK(:P_USER_SK, ca.cust_sk, ac.ac_sk)
+    ) AS ac_id,
+    alias.ac_alias,
+    IFF(
+      ca.dflt_rptg_type = 'WLT' OR ac.data_src_id = 7,
+      ac.ac_desc,
+      GET_MASKED_AC_NAME(:P_USER_SK, ca.cust_sk, ac.ac_sk, ac.ac_desc)
+    ) AS ac_desc,
+    cmp.cmpnt_dcde,
+    cmp.sort_nbr,
+    ac.data_src_id,
+    ac.bse_curr_dcde,
+    -- count of how many rows the user is actually enrolled for this decoder
+    COUNT(ndx.DECODER_AC_SK) 
+      OVER ( PARTITION BY ndx.DECODER_AC_SK ) AS enrl_decoder_sk
+  FROM npf_account AS ac
+  INNER JOIN npf_consl_cmpnt AS cmp
+    ON cmp.cmpnt_sk_val = ac.ac_sk
+   AND cmp.consl_sk     = :P_CONSL_SK
+   AND cmp.cmpnt_dcde   = 'ACCOUNT'
+   AND cmp.consl_cmpnt_stat_dcde = 'ACTIVE'
+  INNER JOIN npf_consl AS c
+    ON c.consl_sk = cmp.consl_sk
+  INNER JOIN npf_cust_ac_alias AS alias
+    ON alias.cust_sk = c.cust_sk
+   AND alias.ac_sk   = ac.ac_sk
+  INNER JOIN npf_ac_cust_user AS xref
+    ON xref.ac_sk    = ac.ac_sk
+   AND xref.cust_sk  = c.cust_sk
+   AND xref.user_sk  = ca.user_sk_generic
+  LEFT JOIN NPF_DECODER_XREF AS ndx
+    ON ndx.CMPNT_AC_SK = xref.ac_sk
+   AND ndx.CUST_SK     = c.cust_sk
+  CROSS JOIN consl_access AS ca
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM npf_account AS ac2
+    INNER JOIN npf_consl_cmpnt AS cmp2
+      ON cmp2.cmpnt_sk_val = ac2.ac_sk
+     AND cmp2.consl_sk     = :P_CONSL_SK
+     AND cmp2.cmpnt_dcde   = 'ACCOUNT'
+     AND cmp2.consl_cmpnt_stat_dcde = 'ACTIVE'
+    LEFT JOIN npf_ac_cust_user AS acu
+      ON acu.ac_sk  = ac2.ac_sk
+     AND acu.cust_sk = c.cust_sk
+     AND acu.user_sk = ca.user_sk_generic
+    WHERE ac2.ac_sk = ac.ac_sk
+      AND acu.ac_sk IS NULL
+    LIMIT 1
+  )
+),
+
+-- 6) “decoder-only” filtered accounts for p_accounts_only = 'D'
+decoder_only AS (
+  SELECT DISTINCT
+    -- if enrolled decoder count = tot_dec_ac and tot_dec_ac=2 and dec_data_src_id=1 ⇒ use decoder_sk; else use base ac_sk
+    IFF(
+      enrl_decoder_sk > 0
+      AND (tot_dec_ac - enrl_decoder_sk) = 0
+      AND tot_dec_ac = 2
+      AND dec_data_src_id = 1,
+      decoder_sk,
+      ac_sk
+    )           AS ac_sk,
+    IFF(
+      enrl_decoder_sk > 0
+      AND (tot_dec_ac - enrl_decoder_sk) = 0
+      AND tot_dec_ac = 2
+      AND dec_data_src_id = 1,
+      decoder_ac_id,
+      ac_id
+    )           AS ac_id,
+    ac_alias,
+    ac_desc,
+    cmpnt_dcde,
+    sort_nbr,
+    data_src_id,
+    bse_curr_dcde
+  FROM decoder_counts
+  WHERE
+    IFF(
+      enrl_decoder_sk > 0
+      AND (tot_dec_ac - enrl_decoder_sk) = 0
+      AND tot_dec_ac = 2
+      AND dec_data_src_id = 2,
+      'N',
+      'Y'
+    ) = 'Y'
+),
+
+-- 7) “all-accounts-plus-sub-consolidations” for p_accounts_only = 'N' (accounts+decoder logic union sub-consl)
+all_accounts_union AS (
+  SELECT
+    -- pick the same columns as acct_only + decoder_only, plus a “decoder_acct_flag”
+    base.ac_sk,
+    base.ac_id,
+    base.ac_alias,
+    base.ac_desc,
+    base.cmpnt_dcde,
+    base.sort_nbr,
+    base.data_src_id,
+    base.bse_curr_dcde,
+    IFF(
+      dc.enrl_decoder_sk > 0
+      AND (dc.tot_dec_ac - dc.enrl_decoder_sk) = 0,
+      'Y',
+      'N'
+    ) AS decoder_acct_flag
+  FROM decoder_counts AS dc
+  JOIN consl_access AS ca
+    ON TRUE
+  JOIN npf_account AS ac
+    ON ac.ac_sk = dc.ac_sk
+  JOIN npf_cust_ac_alias AS alias
+    ON alias.ac_sk = ac.ac_sk
+   AND alias.cust_sk = ca.cust_sk
+  JOIN npf_consl_cmpnt AS cmp
+    ON cmp.cmpnt_sk_val = ac.ac_sk
+   AND cmp.consl_sk     = :P_CONSL_SK
+   AND cmp.cmpnt_dcde   = 'ACCOUNT'
+   AND cmp.consl_cmpnt_stat_dcde = 'ACTIVE'
+  WHERE
+    IFF(
+      dc.enrl_decoder_sk > 0
+      AND (dc.tot_dec_ac - dc.enrl_decoder_sk) = 0
+      AND dc.tot_dec_ac = 2
+      AND dc.dec_data_src_id = 1,
+      TRUE,  -- include this decoder account
+      dc.dec_data_src_id IS NOT NULL  -- otherwise include all base accounts
+    )
+  UNION
+  -- include “sub-consolidations” as separate rows (Oracle’s UNION … sub.consl_sk, NULL,NULL, sub.consl_desc,…)
+  SELECT
+    sub.consl_sk        AS ac_sk,       -- using AC_SK column for a consolidation SK
+    NULL                 AS ac_id,
+    NULL                 AS ac_alias,
+    sub.consl_desc       AS ac_desc,
+    cmp.cmpnt_dcde,
+    cmp.sort_nbr,
+    NULL                 AS data_src_id,
+    NULL                 AS bse_curr_dcde,
+    'N'                  AS decoder_acct_flag
+  FROM npf_consl AS main_consl
+  JOIN npf_consl_cmpnt AS cmp
+    ON cmp.consl_sk     = main_consl.consl_sk
+   AND cmp.cmpnt_dcde   = 'CONSL'
+   AND cmp.consl_cmpnt_stat_dcde = 'ACTIVE'
+  JOIN npf_consl     AS sub
+    ON sub.consl_sk   = cmp.cmpnt_sk_val
+  WHERE main_consl.consl_sk = :P_CONSL_SK
+)
+
+-- FINAL: choose which branch to return based on :P_ACCOUNTS_ONLY
+SELECT *
+FROM (
+  SELECT
+    ao.ac_sk,
+    ao.ac_id,
+    ao.ac_alias,
+    ao.ac_desc,
+    ao.cmpnt_dcde,
+    ao.sort_nbr,
+    ao.data_src_id,
+    ao.bse_curr_dcde,
+    ao.decoder_acct_flag
+  FROM all_accounts_union AS ao
+  WHERE :P_ACCOUNTS_ONLY IN ('N')
+
+  UNION ALL
+
+  SELECT
+    co.ac_sk,
+    co.ac_id,
+    co.ac_alias,
+    co.ac_desc,
+    co.cmpnt_dcde,
+    co.sort_nbr,
+    co.data_src_id,
+    co.bse_curr_dcde,
+    NULL              AS decoder_acct_flag
+  FROM acct_only AS co
+  WHERE :P_ACCOUNTS_ONLY = 'Y'
+
+  UNION ALL
+
+  -- “D” branch: only decoder-account‐flagged rows (use decoder_only)
+  SELECT
+    dc.ac_sk,
+    dc.ac_id,
+    dc.ac_alias,
+    dc.ac_desc,
+    dc.cmpnt_dcde,
+    dc.sort_nbr,
+    dc.data_src_id,
+    dc.bse_curr_dcde,
+    NULL             AS decoder_acct_flag
+  FROM decoder_only AS dc
+  WHERE :P_ACCOUNTS_ONLY = 'D'
+) final_result
+ORDER BY sort_nbr
+;
