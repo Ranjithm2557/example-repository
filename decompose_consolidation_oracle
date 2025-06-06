@@ -1,5 +1,5 @@
 WITH 
-  consl AS (
+  consol AS (
     SELECT
       consl_sk,
       cust_sk
@@ -10,7 +10,7 @@ WITH
   user_has_access AS (
     SELECT 1 AS ok
     FROM npf_consl_user_access cua
-    WHERE cua.consl_sk            = (SELECT consl_sk FROM consl)
+    WHERE cua.consl_sk            = (SELECT consl_sk FROM consol)
       AND cua.user_sk             = 101299
       AND cua.consl_user_stat_dcde = 'ACTIVE'
   ),
@@ -18,7 +18,7 @@ WITH
     SELECT
       cmpnt.cmpnt_sk_val AS ac_sk
     FROM npf_consl_cmpnt cmpnt
-    WHERE cmpnt.consl_sk             = (SELECT consl_sk FROM consl)
+    WHERE cmpnt.consl_sk             = (SELECT consl_sk FROM consol)
       AND cmpnt.consl_cmpnt_stat_dcde = 'ACTIVE'
       AND cmpnt.cmpnt_dcde           = 'ACCOUNT'
   ),
@@ -28,7 +28,7 @@ WITH
     FROM accounts_list al
     LEFT JOIN npf_ac_cust_user acu
       ON acu.ac_sk   = al.ac_sk
-     AND acu.cust_sk = (SELECT cust_sk FROM consl)
+     AND acu.cust_sk = (SELECT cust_sk FROM consol)
      AND acu.user_sk = 101299
     WHERE acu.ac_sk IS NULL
   ),
@@ -49,25 +49,23 @@ SELECT
   dtltype.prod_info_url_desc,
   cmpnt.cmpnt_dcde,
   cmpnt.sort_nbr
-FROM consl
-JOIN user_has_access ua
-  ON 1 = 1
-JOIN bad_flag bf
-  ON bf.has_bad = 0
+FROM consol
 JOIN npf_consl_cmpnt cmpnt
-  ON cmpnt.consl_sk             = consl.consl_sk
+  ON cmpnt.consl_sk             = consol.consl_sk
  AND cmpnt.consl_cmpnt_stat_dcde = 'ACTIVE'
  AND cmpnt.cmpnt_dcde           = 'ACCOUNT'
 JOIN npf_account ac
   ON ac.ac_sk = cmpnt.cmpnt_sk_val
 JOIN npf_ac_cust_user acu2
   ON acu2.ac_sk   = ac.ac_sk
- AND acu2.cust_sk = consl.cust_sk
+ AND acu2.cust_sk = consol.cust_sk
  AND acu2.user_sk = 101299
 JOIN npf_cust_ac_alias alias
   ON alias.ac_sk   = ac.ac_sk
- AND alias.cust_sk = consl.cust_sk
+ AND alias.cust_sk = consol.cust_sk
 LEFT JOIN npf_ac_type actype
   ON ac.ac_type    = actype.ac_type
 LEFT JOIN npf_dtl_ac_type dtltype
-  ON ac.dtl_ac_type = dtltype.dtl_ac_type;
+  ON ac.dtl_ac_type = dtltype.dtl_ac_type
+WHERE EXISTS (SELECT 1 FROM user_has_access)
+  AND (SELECT has_bad FROM bad_flag) = 0;
