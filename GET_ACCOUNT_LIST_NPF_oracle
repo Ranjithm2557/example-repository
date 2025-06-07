@@ -62,52 +62,57 @@ account_data AS (
     ac.ac_memo_desc,
     ROW_NUMBER() OVER (ORDER BY display_desc)  AS rn
   FROM wp_src.npf_ac_cust_user x
-  JOIN wp_src.npf_account         ac ON ac.ac_sk     = x.ac_sk
-  JOIN wp_src.npf_ac_type         at ON at.ac_type   = ac.ac_type
-  JOIN wp_src.npf_dtl_ac_type     dt ON dt.dtl_ac_type= ac.dtl_ac_type
-  JOIN wp_src.npf_data_src        ds ON ds.data_src_id= ac.data_src_id
-  LEFT JOIN wp_src.npf_cust_ac_alias  ca
+  JOIN wp_src.npf_account         ac ON ac.ac_sk       = x.ac_sk
+  JOIN wp_src.npf_ac_type         at ON at.ac_type     = ac.ac_type
+  JOIN wp_src.npf_dtl_ac_type     dt ON dt.dtl_ac_type  = ac.dtl_ac_type
+  JOIN wp_src.npf_data_src        ds ON ds.data_src_id  = ac.data_src_id
+  LEFT JOIN wp_src.npf_cust_ac_alias ca
     ON ca.ac_sk   = ac.ac_sk
    AND ca.cust_sk = x.cust_sk
   LEFT JOIN wp_src.npf_mstr_prtnr_ac pr
     ON pr.ac_sk   = ac.ac_sk
   LEFT JOIN wp_src.npf_decode        curr
-    ON curr.dcde_type = 'CURR' AND curr.dcde_code = ac.bse_curr_dcde
+    ON curr.dcde_type = 'CURR'
+   AND curr.dcde_code = ac.bse_curr_dcde
   LEFT JOIN wp_src.npf_decode        liab
-    ON liab.dcde_type = 'LIABFLAG' AND liab.dcde_code = ac.liab_flag
+    ON liab.dcde_type = 'LIABFLAG'
+   AND liab.dcde_code = ac.liab_flag
   LEFT JOIN attr ar
     ON ar.ac_sk = ac.ac_sk
-  WHERE x.user_sk   = :p_user_sk
-    AND x.cust_sk   = :p_cust_sk
+  WHERE x.user_sk = 101299
+    AND x.cust_sk = 100809
     AND (
-      :p_ac_src IS NULL
+      NULL IS NULL
       OR (
-           (:p_ac_src = '1' AND ac.data_src_id IN (1,2))
-        OR (:p_ac_src = '7' AND ac.data_src_id IN (6,7,8))
-        OR (:p_ac_src NOT IN ('1','7')
-            AND ac.data_src_id = TO_NUMBER(:p_ac_src)
+           (NULL = '1' AND ac.data_src_id IN (1,2))
+        OR (NULL = '7' AND ac.data_src_id IN (6,7,8))
+        OR (
+             NULL NOT IN ('1','7')
+             AND ac.data_src_id = TO_NUMBER(NULL)
            )
       )
     )
-    AND ( :p_ac_type   IS NULL OR ac.ac_type   = :p_ac_type )
+    AND ('INV' IS NULL OR ac.ac_type = 'INV')
     AND (
-      :p_consl_sk IS NULL
+      NULL IS NULL
       OR EXISTS (
         SELECT 1
           FROM wp_src.npf_consl_cmpnt c
          WHERE c.cmpnt_sk_val           = ac.ac_sk
-           AND c.consl_sk               = :p_consl_sk
+           AND c.consl_sk               = NULL
            AND c.consl_cmpnt_stat_dcde = 'ACTIVE'
       )
     )
-    AND ( :p_attrb_1  IS NULL OR ar.attrb_desc1 = :p_attrb_1 )
-    AND ( :p_attrb_2  IS NULL OR ar.attrb_desc2 = :p_attrb_2 )
-    AND ( :p_attrb_3  IS NULL OR ar.attrb_desc3 = :p_attrb_3 )
-    AND ( :p_attrb_4  IS NULL OR ar.attrb_desc4 = :p_attrb_4 )
-    AND ( :p_attrb_5  IS NULL OR ar.attrb_desc5 = :p_attrb_5 )
-    AND ( :p_ac_desc  IS NULL OR UPPER(display_desc) LIKE '%' || UPPER(:p_ac_desc) || '%' )
-    AND ( :p_ac_id    IS NULL OR UPPER(ac.ac_id)   LIKE '%' || UPPER(:p_ac_id)   || '%' )
+    AND (NULL IS NULL OR ar.attrb_desc1 = NULL)
+    AND (NULL IS NULL OR ar.attrb_desc2 = NULL)
+    AND (NULL IS NULL OR ar.attrb_desc3 = NULL)
+    AND (NULL IS NULL OR ar.attrb_desc4 = NULL)
+    AND (NULL IS NULL OR ar.attrb_desc5 = NULL)
+    AND ('ZZMILFAM II LP' IS NULL
+         OR UPPER(display_desc) LIKE '%' || UPPER('ZZMILFAM II LP') || '%')
+    AND ('2614417' IS NULL
+         OR UPPER(ac.ac_id)   LIKE '%' || UPPER('2614417')   || '%')
 )
 SELECT *
   FROM account_data
- WHERE rn BETWEEN :p_first_index AND :p_last_index;
+ WHERE rn BETWEEN NULL AND NULL;
