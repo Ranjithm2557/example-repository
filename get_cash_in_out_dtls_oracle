@@ -1,0 +1,63 @@
+WITH
+  params AS (
+    SELECT
+      :p_ac_sk                                   AS p_ac_sk,
+      :p_flag                                    AS p_flag,
+      NVL(
+        :p_as_of_date_c,
+        (SELECT data_load_date
+           FROM NPF_DATA_LOAD_DATE
+           WHERE ROWNUM = 1
+        )
+      )                                          AS v_as_of_date
+    FROM DUAL
+  ),
+  date_range AS (
+    SELECT
+      p_ac_sk,
+      p_flag,
+      TRUNC(v_as_of_date, 'MM')                  AS v_st_date,
+      TRUNC(v_as_of_date)
+        + INTERVAL '23:59:59' HOUR TO SECOND      AS v_end_date
+    FROM params
+  ),
+  img_url AS (
+    SELECT
+      dcde_desc                                  AS po_chk_img_url
+    FROM npf_decode
+    WHERE dcde_type = '<pg_chk_img_dcde_type_c>'  -- your constant, e.g. 'IMG_URL_TYPE'
+      AND dcde_code = '<pg_chk_img_url_code_c>'   -- your constant, e.g. 'IMG_URL_CODE'
+      AND ROWNUM = 1
+  )
+SELECT
+  ac.ac_sk                         AS po_ac_sk,
+  ac.bk_id                         AS po_bk_id,
+  ac.cm_data_src_id                AS po_cm_data_src_id,
+  nt.tran_proc_time                AS po_tran_proc_time,
+  tran.subcatg_desc                AS po_subcatg_desc,
+  nt.tran_long_desc                AS po_tran_long_desc,
+  nt.net_cash_bse_amt              AS po_net_cash_bse_amt,
+  tran_settle.actl_set_date_time   AS po_actl_set_date_time,
+  img_url.po_chk_img_url           AS po_chk_img_url,
+  tran_bk.img_avail_flg            AS po_chk_img_flg,
+  tran_bk.ck_nbr                   AS po_chk_nbr,
+  tran_bk.seq_num                  AS po_seq_num
+FROM date_range dr
+CROSS JOIN img_url
+JOIN npf_transaction   nt
+  ON nt.ac_sk        = dr.p_ac_sk
+JOIN npf_tran_catg    tran
+  ON nt.tran_code    = tran.tran_code
+ AND nt.data_src_id  = tran.data_src_id
+JOIN npf_account      ac
+  ON nt.ac_sk        = ac.ac_sk
+JOIN npf_tran_settle  tran_settle
+  ON nt.transaction_sk = tran_settle.transaction_sk
+LEFT JOIN npf_tran_bk  tran_bk
+  ON nt.transaction_sk = tran_bk.transaction_sk
+WHERE nt.net_cash_bse_amt <> 0
+  AND nt.supr_tran_dcde    <> '<pg_supr_tran_dcde_c>'  -- e.g. 'SP'
+  AND tran.rptg_type       = '<pg_rptg_type_c>'       -- e.g. 'RPT'
+  AND nt.revl_type_dcde   IN ('NA','RV')
+  AND (
+       (dr.p_flag = 'CASH_IN'
