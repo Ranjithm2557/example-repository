@@ -1,0 +1,123 @@
+WITH attr AS (
+  SELECT
+    a.ac_sk,
+    a.cust_sk,
+    MAX(CASE WHEN b.attrb_hdr_seq = 1 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc1,
+    MAX(CASE WHEN b.attrb_hdr_seq = 2 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc2,
+    MAX(CASE WHEN b.attrb_hdr_seq = 3 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc3,
+    MAX(CASE WHEN b.attrb_hdr_seq = 4 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc4,
+    MAX(CASE WHEN b.attrb_hdr_seq = 5 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc5
+  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_attrb a
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_attribute b
+    ON a.attrb_id = b.attrb_id
+  WHERE a.attrb_hdr_seq BETWEEN 1 AND 5
+  GROUP BY a.ac_sk, a.cust_sk
+),
+account_data AS (
+  SELECT
+    ac.ac_sk,
+    ac.ac_id,
+    pr.prtnr_sk,
+    ac.bk_id,
+    ac.ac_type,
+    at.ac_type_desc,
+    ac.dtl_ac_type,
+    dt.dtl_ac_type_desc,
+    ac.data_src_id,
+    ds.data_src_desc,
+    COALESCE(ca.upd_ac_desc, ac.ac_desc)           AS ac_desc,
+    ca.ac_alias,
+    ac.bse_curr_dcde,
+    curr.dcde_desc                               AS curr_dcde_desc,
+    ac.ac_stat_dcde,
+    ac.svc_prvdr_desc,
+    ac.svc_prvdr_url_desc,
+    ac.liab_flag,
+    liab.dcde_desc                               AS liab_flag_dcde,
+    ac.real_tm_upd_flag,
+    ac.fisc_yrnd,
+    ac.lot_rlf_meth_dcde,
+    ac.inv_obj_dcde,
+    ac.ac_prem_calc_meth_dcde,
+    ac.ac_amort_calc_meth_dcde,
+    ac.ac_acrt_calc_meth_dcde,
+    ac.ac_oid_calc_meth_dcde,
+    ac.ac_close_date,
+    ac.ac_open_date,
+    ac.npf_data_load_date,
+    ac.ac_creat_user_sk,
+    ac.cm_ac_id,
+    ac.cm_data_src_id,
+    ac.alw_marg_ac_flag,
+    ac.creat_by,
+    ac.creat_tm,
+    ac.upd_by,
+    ac.upd_tm,
+    ds.extl_flg,
+    ar.attrb_desc1,
+    ar.attrb_desc2,
+    ar.attrb_desc3,
+    ar.attrb_desc4,
+    ar.attrb_desc5,
+    COALESCE(ca.ac_alias, ac.ac_desc)             AS display_desc,
+    ac.ac_memo_desc,
+    pi.indx_sk,
+    pi.indx_desc
+  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_cust_user x
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account ac       USING (ac_sk)
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_type at       USING (ac_type)
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_dtl_ac_type dt   USING (dtl_ac_type)
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src ds      USING (data_src_id)
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_cust_ac_alias ca
+    ON ca.ac_sk = ac.ac_sk AND ca.cust_sk = x.cust_sk
+  LEFT JOIN DEV_WPA_ACCOUNTS_DB.CORE.npf_perf_indx_ac acp
+    ON acp.ac_sk = ac.ac_sk
+  LEFT JOIN DEV_WPA_ACCOUNTS_DB.CORE.npf_perf_indx pi
+    ON pi.indx_sk = acp.indx_sk
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_mstr_prtnr_ac pr
+    ON pr.ac_sk = ac.ac_sk
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_decode curr
+    ON curr.dcde_type = 'CURR' AND curr.dcde_code = ac.bse_curr_dcde
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_decode liab
+    ON liab.dcde_type = 'LIABFLAG' AND liab.dcde_code = ac.liab_flag
+  LEFT JOIN attr ar
+    ON ar.ac_sk   = ac.ac_sk
+   AND ar.cust_sk = x.cust_sk
+  WHERE x.user_sk = :p_user_sk
+    AND x.cust_sk = :p_cust_sk
+
+    /* p_ac_src logic exactly as in the PL/SQL: */
+    AND (
+      :p_ac_src IS NULL
+      OR (
+           (:p_ac_src = '1' AND ac.data_src_id IN (1,2))
+        OR (:p_ac_src = '7' AND ac.data_src_id IN (6,7,8))
+        OR (:p_ac_src NOT IN ('1','7') AND ac.data_src_id = TRY_TO_NUMBER(:p_ac_src))
+      )
+    )
+
+    /* other filters: */
+    AND (:p_ac_type   IS NULL OR ac.ac_type              = :p_ac_type)
+    AND (
+      :p_consl_sk IS NULL
+      OR EXISTS (
+        SELECT 1
+          FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_consl_cmpnt c
+         WHERE c.cmpnt_sk_val           = ac.ac_sk
+           AND c.consl_sk               = :p_consl_sk
+           AND c.consl_cmpnt_stat_dcde = 'ACTIVE'
+      )
+    )
+    AND (:p_attrb_1  IS NULL OR ar.attrb_desc1 = :p_attrb_1)
+    AND (:p_attrb_2  IS NULL OR ar.attrb_desc2 = :p_attrb_2)
+    AND (:p_attrb_3  IS NULL OR ar.attrb_desc3 = :p_attrb_3)
+    AND (:p_attrb_4  IS NULL OR ar.attrb_desc4 = :p_attrb_4)
+    AND (:p_attrb_5  IS NULL OR ar.attrb_desc5 = :p_attrb_5)
+    AND (:p_ac_desc  IS NULL OR UPPER(display_desc) LIKE CONCAT('%', UPPER(:p_ac_desc), '%'))
+    AND (:p_ac_id    IS NULL OR UPPER(ac.ac_id)   LIKE CONCAT('%', UPPER(:p_ac_id),   '%'))
+)
+
+SELECT *
+  FROM account_data
+ QUALIFY ROW_NUMBER() OVER (ORDER BY display_desc) 
+         BETWEEN :p_first_index AND :p_last_index;
