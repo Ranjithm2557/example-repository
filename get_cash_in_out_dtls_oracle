@@ -60,4 +60,8 @@ WHERE nt.net_cash_bse_amt <> 0
   AND tran.rptg_type       = '<pg_rptg_type_c>'       -- e.g. 'RPT'
   AND nt.revl_type_dcde   IN ('NA','RV')
   AND (
-       (dr.p_flag = 'CASH_IN'
+       (dr.p_flag = 'CASH_IN'  AND nt.net_cash_bse_amt > 0)
+    OR (dr.p_flag = 'CASH_OUT' AND nt.net_cash_bse_amt < 0)
+  )
+  AND tran_settle.actl_set_date_time
+        BETWEEN dr.v_st_date AND dr.v_end_date;
