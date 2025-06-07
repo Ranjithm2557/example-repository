@@ -1,7 +1,6 @@
 WITH attr AS (
   SELECT
     a.ac_sk,
-    a.cust_sk,
     MAX(CASE WHEN b.attrb_hdr_seq = 1 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc1,
     MAX(CASE WHEN b.attrb_hdr_seq = 2 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc2,
     MAX(CASE WHEN b.attrb_hdr_seq = 3 THEN b.attrb_desc || '|' || b.attrb_id END) AS attrb_desc3,
@@ -11,7 +10,7 @@ WITH attr AS (
   JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_attribute b
     ON a.attrb_id = b.attrb_id
   WHERE a.attrb_hdr_seq BETWEEN 1 AND 5
-  GROUP BY a.ac_sk, a.cust_sk
+  GROUP BY a.ac_sk
 ),
 account_data AS (
   SELECT
@@ -25,15 +24,15 @@ account_data AS (
     dt.dtl_ac_type_desc,
     ac.data_src_id,
     ds.data_src_desc,
-    COALESCE(ca.upd_ac_desc, ac.ac_desc) AS ac_desc,
+    COALESCE(ca.upd_ac_desc, ac.ac_desc)    AS ac_desc,
     ca.ac_alias,
     ac.bse_curr_dcde,
-    curr.dcde_desc            AS curr_dcde_desc,
+    curr.dcde_desc                       AS curr_dcde_desc,
     ac.ac_stat_dcde,
     ac.svc_prvdr_desc,
     ac.svc_prvdr_url_desc,
     ac.liab_flag,
-    liab.dcde_desc            AS liab_flag_dcde,
+    liab.dcde_desc                       AS liab_flag_dcde,
     ac.real_tm_upd_flag,
     ac.fisc_yrnd,
     ac.lot_rlf_meth_dcde,
@@ -59,7 +58,7 @@ account_data AS (
     ar.attrb_desc3,
     ar.attrb_desc4,
     ar.attrb_desc5,
-    COALESCE(ca.ac_alias, ac.ac_desc) AS display_desc,
+    COALESCE(ca.ac_alias, ac.ac_desc)      AS display_desc,
     ac.ac_memo_desc
   FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_cust_user x
   JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account ac       USING (ac_sk)
@@ -75,8 +74,7 @@ account_data AS (
   LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_decode liab
     ON liab.dcde_type = 'LIABFLAG' AND liab.dcde_code = ac.liab_flag
   LEFT JOIN attr ar
-    ON ar.ac_sk   = ac.ac_sk
-   AND ar.cust_sk = x.cust_sk
+    ON ar.ac_sk = ac.ac_sk
   WHERE x.user_sk   = 101299
     AND x.cust_sk   = 100809
     AND (
@@ -103,8 +101,8 @@ account_data AS (
     AND (NULL IS NULL OR ar.attrb_desc3 = NULL)
     AND (NULL IS NULL OR ar.attrb_desc4 = NULL)
     AND (NULL IS NULL OR ar.attrb_desc5 = NULL)
-    AND ('ZZMILFAM II LP' IS NULL OR UPPER(display_desc) LIKE CONCAT('%','ZZMILFAM II LP','%'))
-    AND ('2614417'    IS NULL OR UPPER(ac.ac_id)   LIKE CONCAT('%','2614417','%'))
+    AND ('ZZMILFAM II LP' IS NULL OR UPPER(display_desc) LIKE '%ZZMILFAM II LP%')
+    AND ('2614417' IS NULL OR UPPER(ac.ac_id) LIKE '%2614417%')
 )
 SELECT *
   FROM account_data
