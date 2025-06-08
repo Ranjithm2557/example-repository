@@ -1,0 +1,127 @@
+WITH
+  dec AS (
+    SELECT
+      dx.cmpnt_ac_sk,
+      IFF(:p_decoder_flg='Y',dx.decoder_ac_sk,NULL) AS decoder_ac_sk,
+      IFF(:p_decoder_flg='Y',dx.decoder_ac_id,NULL) AS decoder_ac_id
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_decoder_xref dx
+    WHERE dx.decoder_ac_sk=:p_ac_sk
+    QUALIFY ROW_NUMBER() OVER (ORDER BY dx.cmpnt_data_src_id,dx.creat_tm)=1
+  ),
+
+  base_ac AS (
+    SELECT COALESCE(cmpnt_ac_sk,:p_ac_sk) AS ac_sk,decoder_ac_sk,decoder_ac_id
+    FROM dec
+  ),
+
+  tx AS (
+    SELECT
+      map.nrn_src_sys,i_nrn_ac=>ac_mds.CONTRACT_ID,
+      CASE WHEN LEFT(ac_mds.ACCOUNT_LEGAL_IDENTIFIER,1) IN('-','+')
+           THEN SUBSTR(ac_mds.ACCOUNT_LEGAL_IDENTIFIER,2)
+           ELSE ac_mds.ACCOUNT_LEGAL_IDENTIFIER END AS cleaned_tx,
+      EXISTS(
+        SELECT 1 FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account a
+        WHERE a.data_src_id IN(5,10)
+          AND a.cm_data_src_id=map.nrn_src_sys
+      ) AS needs_substr
+    FROM DEV_NPF_DB.CDC_DIRECT.NPF_MDS_ACCOUNT_LOAD_AUD ac_mds
+    JOIN DEV_NPF_DB.CDC_DIRECT.NPF_MDS_LOAD_ACT_PART_AUD part
+      ON ac_mds.n_mds_db=part.active_partition
+    JOIN DEV_NPF_DB.CDC_DIRECT.NPF_MDS_NRN_ACC_SRC_SYS_MAP_AUD map
+      ON ac_mds.source_system_type=map.mds_src_sys
+     AND NVL(map.mds_prod_line,'')=NVL(ac_mds.product_line,'')
+    WHERE ac_mds.account_status_type_value<>'Purged'
+  ),
+
+  prefs AS (
+    SELECT ac2.AC_SK,MAX(CASE WHEN usr2.DFLT_RPTG_TYPE='PCS' THEN 1 ELSE 0 END) AS has_pcs
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.NPF_USER usr2
+    JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.NPF_AC_CUST_USER ac2
+      ON usr2.USER_SK=ac2.USER_SK AND ac2.CUST_SK=:p_cust_sk
+    GROUP BY ac2.AC_SK
+  ),
+
+  attrs AS (
+    SELECT a.ac_sk,MAX(b.attrb_id||'|'||b.attrb_desc) AS attrb_desc1
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_attrb a
+    JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_attribute b
+      ON a.attrb_id=b.attrb_id
+     AND b.CUST_SK=:p_cust_sk
+     AND b.attrb_hdr_seq=1
+    GROUP BY a.ac_sk
+  ),
+
+  partner AS (
+    SELECT pr.ac_sk,pr.lnkd_ac_sk,
+           acc.ac_id AS lnkd_ac_id,acc.ac_desc AS lnkd_ac_desc,
+           ast.ast_short_desc,ast.ast_long_desc,ast.tnt_sec_id,
+           ast.iss_type,ast.man_aggr_ast_id,ast.vintage_yr
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_mstr_prtnr_ac pr
+    JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account acc
+      ON acc.ac_sk=pr.lnkd_ac_sk
+    JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_asset ast
+      ON ast.instr_id=pr.instr_id
+  ),
+
+  decode_full AS (
+    SELECT dcde_type,dcde_code,dcde_desc
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_decode
+  ),
+
+  acct_main AS (
+    SELECT
+      ac.*,b.decoder_ac_sk,b.decoder_ac_id,
+      alias.upd_ac_desc,alias.ac_alias,
+      act.ac_type_desc,dtl.dtl_ac_type_desc,dtl.ac_type_grp_dcde,dtl.prod_info_url_desc,
+      src.ac_dtl_src_desc,src.extl_flg,
+      acagr.lst_valn_date,acagr.ast_acq_date,acagr.ac_commt_amt,acagr.ac_fund_amt,acagr.aggr_ast_id,
+      perf.indx_sk,perf.indx_desc,
+      pr.lnkd_ac_sk,pr.lnkd_ac_id,pr.lnkd_ac_desc,
+      pr.ast_short_desc,pr.ast_long_desc,pr.tnt_sec_id,pr.iss_type,pr.man_aggr_ast_id,pr.vintage_yr,
+      tx.cleaned_tx AS raw_tx,tx.needs_substr,
+      IFF(EXISTS(
+        SELECT 1 FROM DEV_ANCHOR_ANALYTICS.WP_SRC.NPF_AC_CUST_USER x
+        WHERE x.CUST_SK=:p_cust_sk AND x.AC_SK=ac.ac_sk
+      ),1,0) AS has_access,
+      prefs.has_pcs,attrs.attrb_desc1
+    FROM base_ac b
+    JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account ac
+      ON ac.ac_sk=b.ac_sk
+    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_cust_ac_alias alias
+      ON alias.ac_sk=ac.ac_sk AND alias.cust_sk=:p_cust_sk
+    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_type act
+      ON act.ac_type=ac.ac_type
+    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_dtl_ac_type dtl
+      ON dtl.dtl_ac_type=ac.dtl_ac_type
+    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src src
+      ON src.data_src_id=ac.data_src_id
+    LEFT JOIN DEV_WPA_ACCOUNTS_DB.CORE.npf_ac_aggregation acagr
+      ON acagr.ac_sk=ac.ac_sk
+    LEFT JOIN DEV_WPA_ACCOUNTS_DB.CORE.npf_perf_indx_ac pi
+      ON pi.indx_sk=:p_perf_indx_sk
+    LEFT JOIN DEV_WPA_ACCOUNTS_DB.CORE.npf_perf_indx perf
+      ON perf.indx_sk=pi.indx_sk
+    LEFT JOIN partner pr
+      ON pr.ac_sk=ac.ac_sk
+    LEFT JOIN tx
+      ON tx.nrn_src_sys=ac.cm_data_src_id AND tx.i_nrn_ac=ac.cm_ac_id
+    LEFT JOIN prefs
+      ON prefs.AC_SK=ac.ac_sk
+    LEFT JOIN attrs
+      ON attrs.ac_sk=ac.ac_sk
+  )
+
+SELECT
+  m.*,
+  cd.dcde_desc AS bse_curr_desc,
+  cd2.dcde_desc AS liab_flag_desc,
+  CASE WHEN m.data_src_id IN(7,8,12)
+       THEN (SELECT dcde_desc FROM decode_full WHERE dcde_type='PCRSTYLE' AND dcde_code=m.inv_obj_dcde)
+       ELSE (SELECT dcde_desc FROM decode_full WHERE dcde_type='INVOBJ'   AND dcde_code=m.inv_obj_dcde)
+  END AS inv_obj_desc
+FROM acct_main m
+LEFT JOIN decode_full cd
+  ON cd.dcde_type='CURRDDLB' AND cd.dcde_code=m.bse_curr_dcde
+LEFT JOIN decode_full cd2
+  ON cd2.dcde_type='LIABFLAG'  AND cd2.dcde_code=m.liab_flag;
