@@ -1,0 +1,48 @@
+WITH cleaned AS (
+  SELECT TRIM(value) AS login_id
+  FROM TABLE(
+    FLATTEN(
+      INPUT => SPLIT(REGEXP_REPLACE(:p_user_id, '[\n\r\t ]', ''), ',')
+    )
+  )
+),
+valid_users AS (
+  SELECT DISTINCT u.user_sk
+  FROM npf_user u
+  JOIN cleaned c
+    ON LOWER(u.login_id) = LOWER(c.login_id)
+  WHERE u.user_type_dcde = 'XW'
+),
+result AS (
+  SELECT
+    :p_ssp_id                      AS ssp_id,
+    :p_ssp_desc                    AS ssp_desc,
+    :p_cmnty_id                    AS cmnty_id,
+    :p_ssp_start_date::DATE        AS ssp_start_date,
+    :p_ssp_end_date::DATE          AS ssp_end_date,
+    :p_ssp_msg_url                 AS ssp_msg_url,
+    :p_ssp_msg_text::STRING        AS ssp_msg_text_clob,
+    :p_creat_by                    AS creat_by,
+    :p_update_by                   AS update_by,
+    NULL                           AS user_sk
+  WHERE :p_cmnty_id <> 0
+
+  UNION ALL
+
+  SELECT
+    :p_ssp_id                      AS ssp_id,
+    :p_ssp_desc                    AS ssp_desc,
+    :p_cmnty_id                    AS cmnty_id,
+    :p_ssp_start_date::DATE        AS ssp_start_date,
+    :p_ssp_end_date::DATE          AS ssp_end_date,
+    :p_ssp_msg_url                 AS ssp_msg_url,
+    :p_ssp_msg_text::STRING        AS ssp_msg_text_clob,
+    :p_creat_by                    AS creat_by,
+    :p_update_by                   AS update_by,
+    vu.user_sk                     AS user_sk
+  FROM valid_users vu
+  WHERE :p_cmnty_id = 0
+)
+SELECT *
+FROM result
+ORDER BY user_sk;
