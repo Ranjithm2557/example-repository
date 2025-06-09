@@ -1,0 +1,39 @@
+get_ac_hlds_lots_dtls: fetches every holdings “lot” for a given account and instrument, with quantities, values (current/month-end/year-end), dates, and partner splits. 
+
+AGG_USER_AC_LIST_SP: reads the user’s report type, all their accounts, linked service items, and any error notes. 
+
+canAliasAccess: looks up the alias’s principal ID and checks if it’s allowed to perform the requested action, returning a simple code. 
+
+create_partner: inserts a new partner record with all provided details and marks it active (or logs inputs and errors if it fails). 
+
+decompose_consolidation: gets the consolidation header (ID, description, dates) and, if asked, lists the accounts inside it. 
+
+get_account_dtls: determines real vs. decoded account ID, chooses the correct detail query by account type, and returns full account fields (IDs, balances, dates, status). 
+
+get_account_list_npf: builds a paged, filtered list of accounts with aliases and type descriptions based on your sort and filter inputs. 
+
+get_account_profile_details: for “decoder” accounts calls a helper then fetches balances, IDs (like SSN), and disclaimers; otherwise fetches type info and disclaimers. 
+
+get_acct_lst: maps login to user ID, then returns all active accounts plus one specified attribute per account. 
+
+get_assets: figures out report type and valuation date, then lists all instruments in the account with their identifiers, descriptions, values, and holding details. 
+
+get_audit_detail: fetches all change records (old vs. new values, who changed it, and when) for a given table row. 
+
+get_bk_mntr_sum_dtl: gets an account’s month-start and month-end balances, plus interest and fees. 
+
+get_cash_in_out_dtls: lists your account’s cash-in or cash-out transactions for the current month. 
+
+get_consl: returns the header info (ID, description, dates) for a consolidation if you have access. 
+
+get_consl_list: gives a paged list of consolidations you can view, with flags and total count. 
+
+get_consl_user_access: shows your permission settings and flags for a specific consolidation. 
+
+get_consls_for_cmpnt_by_client: fetches all consolidations linked to a given component account. 
+
+GET_DATA_LOAD_DATE: returns the single data-load date from its table. 
+
+get_dcde_list_by_desc: lists decode entries of a certain type, ordered by description. 
+
+GET_DCDE_LIST_BY_SORT_NBR: lists decode entries of a certain type, ordered by their sort number.
