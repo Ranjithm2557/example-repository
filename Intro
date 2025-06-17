@@ -1,0 +1,31 @@
+->I'm Ranjith working in public cloud team from GFO, Just to give overview of project
+->we are migrating services from PCF to AKS and highlevel architecture
+->we will get request from the users through the Akamai(external network layer)
+->From Akamai requests go to Azure front door, from F/D it goes to static web apps
+SWA to centralized APIM(API Management) 
+This APIM decides which service to call based on url and send to specific backend service
+->We have around 160 services that need to be migrated. We are migrating services on phased manner, first we pick up 5 services and those are in UAT
+ now, by this weekend we are planned to move to silent prod.
+//while migrating other services, domain teams will comes into picture.
+
+Updating services to be compatible with azure
+1)Every application is integrated with Redis cache
+2)And We created a new gateway called cloud gateway b/w services and apim
+3)Azure SQL connectivity 
+4)and every service is getting data from procedures from the oracle side but to improve the performance we are asked to convert those sotred procedures
+ into optimized snowflake sql queries and integrate in to service
+5)Created a Go-init container to fetch secrets from the key vault
+6) Created docker file and build image for every service
+
+| #  | Task Description                                    | 🔑 Simple Keyword           |
+| -- | --------------------------------------------------- | --------------------------- |
+| 1  | Containerize Spring Boot apps for AKS               | **Dockerization**           |
+| 2  | Replace PCF configs with Azure environment settings | **Config Update**           |
+| 3  | Support Azure auth, convert tokens if needed        | **Auth Migration**          |
+| 4  | Use Azure Front Door, APIM, App Gateway             | **Routing Setup**           |
+| 5  | Switch DB/storage to Azure-native options           | **Storage Update**          |
+| 6  | Integrate Azure Monitor & App Insights              | **Monitoring**              |
+| 7  | Replace PCF bindings with K8s DNS/discovery         | **Service Discovery**       |
+| 8  | Use Azure pipelines, GitHub Actions, Helm           | **CI/CD Migration**         |
+| 9  | Setup firewall, NSG, VNET rules                     | **Network Rules**           |
+| 10 | Reconnect LaunchDarkly, fix access/firewall         | **Third-party Integration** |
