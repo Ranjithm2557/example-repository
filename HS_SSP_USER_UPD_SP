@@ -1,0 +1,37 @@
+WITH
+-- Step 1: Check if SSP_ID exists
+valid_ssp AS (
+    SELECT 1 AS is_valid
+    FROM WPA_SSP
+    WHERE SSP_ID = :p_ssp_id
+    LIMIT 1
+),
+
+-- Step 2: Check if record exists in WPA_SSP_USER
+existing_user AS (
+    SELECT 1 AS exists_flag
+    FROM WPA_SSP_USER
+    WHERE SSP_ID = :p_ssp_id
+      AND USER_SK = :p_user_sk
+    LIMIT 1
+),
+
+-- Step 3: Decide the result based on whether the user already exists
+result_status AS (
+    SELECT
+        CASE
+            WHEN NOT EXISTS (SELECT 1 FROM existing_user)
+                 AND EXISTS (SELECT 1 FROM valid_ssp)
+            THEN 1 ELSE 0
+        END AS P_NO_OF_ROWS,
+        CASE
+            WHEN NOT EXISTS (SELECT 1 FROM existing_user)
+                 AND EXISTS (SELECT 1 FROM valid_ssp)
+            THEN 'INSERT'
+            ELSE 'ALREADY_EXISTS'
+        END AS SSP_PROC
+)
+
+-- Final Output
+SELECT *
+FROM result_status;
