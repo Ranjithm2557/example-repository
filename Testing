@@ -1,3 +1,4 @@
+-- Use the no-date-filter version to see results
 SELECT SSP_ID,
        SSP_DESC,
        CMNTY_ID,
@@ -20,7 +21,6 @@ FROM (
            CREAT_TM,
            ROW_NUMBER() OVER (PARTITION BY SSP_ID ORDER BY CREAT_TM DESC) AS sort_no
     FROM WPA_SSP
-    WHERE SSP_START_DATE >= '2025-06-01'
 ) ssp_dtls
 WHERE sort_no = 1
 ORDER BY CREAT_TM DESC;
