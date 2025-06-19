@@ -1,30 +1,129 @@
-SELECT
-    ALRT_EV.EV_ID,
-    ALRT.ALRT_ID,
-    ALRT.TYP_ID,
-    CASE ALRT_TYP.ALRT_TYP
-        WHEN 'Pending Approval / Pending Secondary Approval' THEN 'Pending Approval'
-        ELSE ALRT_TYP.ALRT_TYP
-    END AS ALRT_TYP,
-    ALRT_GRP.GRP_SHORT_DESC,
-    ALRT_HST.USER_SK,
-    ALRT_HST.SUBJ_TXT,
-    ALRT_HST.MSG_TXT,
-    ALRT_HST.LONG_MSG_TXT,
-    ALRT_HST.COMM_CTR_IND,
-    ALRT_HST.RECIP_ADDR,
-    ALRT_HST.CREAT_BY,
-    ALRT_HST.CREAT_TM,
-    ALRT_HST.UPD_BY,
-    ALRT_HST.UPD_TM,
-    ALRT_HST.PBD_IND,
-    COALESCE(MSG_FLG.MSG_READ_FLAG, 'N') AS MSG_READ_FLAG,
-    COALESCE(MSG_FLG.MSG_DEL_FLAG,  'N') AS MSG_DEL_FLAG
-FROM DEV_NPF_DB.CDC_DIRECT.NPF_ALRT_HIST ALRT_HST
-LEFT JOIN DEV_NPF_DB.CDC_DIRECT.NPF_ALRT_EV ALRT_EV ON ALRT_HST.EV_ID = ALRT_EV.EV_ID
-LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.NPF_ALERT ALRT ON ALRT_EV.ALRT_ID = ALRT.ALRT_ID
-LEFT JOIN DEV_NPF_DB.CDC_DIRECT.NPF_ALRT_TYPE ALRT_TYP ON ALRT.TYP_ID = ALRT_TYP.TYP_ID
-LEFT JOIN DEV_NPF_DB.CDC_DIRECT.NPF_ALRT_GRP ALRT_GRP ON ALRT_TYP.GRP_ID = ALRT_GRP.GRP_ID
-LEFT JOIN DEV_NPF_DB.CDC_DIRECT.WPA_ALRT_MSG_FLG MSG_FLG ON ALRT_HST.EV_ID = MSG_FLG.EV_ID
-WHERE ALRT_HST.USER_SK = 402362
-ORDER BY ALRT_HST.CREAT_TM DESC;
+WITH 
+gdr_flags AS (
+  SELECT 
+    IFF(get_dcde_desc('GDR_ENBL_FLG', 'GDR_GLBL') = 'Y', 'Y', 'N') AS gdr_glbl_flag,
+    IFF(get_dcde_desc('GDR_ENBL_FLG', 'DATA_SRC_AVAIL') = 'Y', 'Y', 'N') AS gdr_local_flag
+),
+user_resolved AS (
+  SELECT 
+    CASE 
+      WHEN (SELECT user_type_dcde FROM npfdbo.npf_user WHERE user_sk = 101299) = 'IN' 
+        THEN get_generic_id(101299, 1001)
+      ELSE 101299
+    END AS user_sk
+),
+valn_dates AS (
+  SELECT 
+    DATE '2025-06-19' AS valn_date1,
+    (SELECT MAX(TRUNC(valn_as_of_date)) 
+     FROM wpadbo.wpa_nws_data_load_mstr 
+     WHERE valn_as_of_date <= DATE '2025-06-19' 
+       AND data_load_finished = 'TRUE') AS valn_date2
+),
+valn_final AS (
+  SELECT 
+    IFF(
+      (SELECT COUNT(*) FROM wpadbo.wpa_data_load_src_strm WHERE data_load_date = (SELECT valn_date1 FROM valn_dates)) > 0,
+      (SELECT valn_date1 FROM valn_dates),
+      (SELECT valn_date2 FROM valn_dates)
+    ) AS valn_date
+),
+weekend_flag AS (
+  SELECT 
+    IFF(DAYNAME((SELECT valn_date FROM valn_final)) IN ('SATURDAY', 'SUNDAY'), 1, 0) AS is_weekend
+),
+last_business_day AS (
+  SELECT 
+    MAX(npf_calendar_date) AS last_busn_date
+  FROM npfdbo.npf_calendar
+  WHERE npf_calendar_date BETWEEN TRUNC((SELECT valn_date FROM valn_final) - 7) AND (SELECT valn_date FROM valn_final)
+    AND (
+      ((5 IN (5,10)) AND is_bank_open = 'Y') OR
+      ((5 NOT IN (5,10)) AND is_market_open = 'Y')
+    )
+),
+data_src AS (
+  SELECT 
+    ac.data_src_id,
+    COALESCE(vw.src_stream_id, 0) AS src_strm_id,
+    mstr.valn_as_of_date,
+    CASE 
+      WHEN COALESCE(vw.src_stream_id, 0) <> 0 THEN (
+        SELECT MAX(TRUNC(ms.data_load_date))
+        FROM wpadbo.wpa_data_load_src_strm ms
+        WHERE ms.data_load_finished = 'COMPLETED'
+          AND ms.data_src_id = mstr.data_src_id
+          AND ms.src_strm_id = vw.src_stream_id
+          AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
+      )
+      ELSE (
+        SELECT MAX(TRUNC(ms.data_load_date))
+        FROM wpadbo.wpa_data_load_src_strm ms
+        WHERE ms.data_load_finished = 'COMPLETED'
+          AND ms.data_src_id = mstr.data_src_id
+          AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
+      )
+    END AS max_valn_as_of_date
+  FROM npfdbo.npf_ac_cust_user acu
+  JOIN npfdbo.npf_user usr ON acu.user_sk = usr.user_sk
+  JOIN npfdbo.npf_account ac ON acu.ac_sk = ac.ac_sk
+  JOIN npfdbo.npf_customer cust ON acu.cust_sk = cust.cust_sk
+  LEFT JOIN wpadbo.wpa_nws_data_load_mstr mstr 
+    ON mstr.data_src_id = ac.data_src_id AND mstr.valn_as_of_date = (SELECT valn_date FROM valn_final)
+  LEFT JOIN wpadbo.wpa_data_load_src_strm mstr_strm 
+    ON mstr_strm.data_src_id = ac.data_src_id AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
+  LEFT JOIN npfdbo.npf_stream_ac_vw vw ON vw.ac_sk = ac.ac_sk
+  WHERE usr.user_sk = (SELECT user_sk FROM user_resolved)
+    AND acu.cust_sk = 1001
+),
+final_data AS (
+  SELECT DISTINCT 
+    mstr.data_src_id,
+    src.data_src_desc,
+    CASE
+      WHEN (SELECT is_weekend FROM weekend_flag) = 1 AND mstr.data_src_id IN (8,15) THEN
+        COALESCE(
+          (SELECT data_load_finished 
+           FROM wpadbo.wpa_nws_data_load_mstr 
+           WHERE data_src_id = mstr.data_src_id AND valn_as_of_date = (SELECT valn_date FROM valn_final) - 1),
+          'FALSE'
+        )
+      WHEN (SELECT is_weekend FROM weekend_flag) = 1 THEN
+        COALESCE(
+          (SELECT data_load_finished 
+           FROM wpadbo.wpa_nws_data_load_mstr 
+           WHERE data_src_id = mstr.data_src_id AND valn_as_of_date = (SELECT last_busn_date FROM last_business_day)),
+          'FALSE'
+        )
+      ELSE COALESCE(mstr2.data_load_finished, 'FALSE')
+    END AS dataload_finished,
+    mstr.valn_as_of_date,
+    mstr.max_valn_as_of_date,
+    src.dcde_desc AS data_source_name,
+    src.sort_nbr AS data_source_order
+  FROM data_src mstr
+  LEFT JOIN wpadbo.wpa_data_load_src_strm mstr2 
+    ON mstr2.data_src_id = mstr.data_src_id 
+    AND mstr2.src_strm_id = mstr.src_strm_id 
+    AND mstr2.data_load_date = mstr.valn_as_of_date
+  INNER JOIN (
+    SELECT 
+      src.data_src_id,
+      COALESCE(strm.src_stream_id, 0) AS src_stream_id,
+      src.data_src_desc,
+      decode.dcde_desc,
+      decode.sort_nbr
+    FROM npfdbo.npf_data_src src
+    LEFT JOIN npfdbo.npf_data_src_stream strm 
+      ON src.data_src_id = strm.data_src_id 
+      AND strm.property_type = 'REGION_SK' 
+      AND strm.run_freq = 'DAILY'
+    LEFT JOIN npfdbo.npf_decode decode 
+      ON src.data_src_id || '-' || COALESCE(strm.src_stream_id, 0) = decode.dcde_code 
+      AND decode.dcde_type = 'WPA_SRC_AVAIL'
+    WHERE src.data_src_id NOT IN (9,11,13,15)
+  ) src ON mstr.data_src_id = src.data_src_id AND mstr.src_strm_id = src.src_stream_id
+)
+SELECT *
+FROM final_data
+ORDER BY data_source_order;
