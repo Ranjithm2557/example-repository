@@ -1,3 +1,4 @@
+-- Final Snowflake-compatible query with npf_rgn_mstr removed
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -9,7 +10,6 @@ vw_stream_ac AS (
     END AS src_stream_id,
     relat.ac_sk
   FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_rgn_relat relat
-  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_rgn_mstr rgn ON relat.rgn_sk = rgn.rgn_sk
   JOIN (
     SELECT DISTINCT
       CASE 
@@ -18,14 +18,14 @@ vw_stream_ac AS (
         ELSE src_stream_id
       END AS src_stream_id,
       data_src_id,
-      regexp_substr(property_value, '[^,]+', 1, seq) AS rgn_sk,
-      seq
+      regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) AS rgn_sk,
+      seq_tbl.ROW_NUMBER AS seq
     FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src_stream,
          TABLE(GENERATOR(ROWCOUNT => 10)) seq_tbl
     WHERE property_type = 'REGION_SK'
       AND regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) IS NOT NULL
   ) strm
-    ON TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END) = rgn.rgn_sk
+    ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
 ),
 user_resolved AS (
   SELECT 
