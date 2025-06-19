@@ -7,7 +7,7 @@ gdr_flags AS (
 user_resolved AS (
   SELECT 
     CASE 
-      WHEN (SELECT user_type_dcde FROM npfdbo.npf_user WHERE user_sk = 101299) = 'IN' 
+      WHEN (SELECT user_type_dcde FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_user WHERE user_sk = 101299) = 'IN' 
         THEN get_generic_id(101299, 1001)
       ELSE 101299
     END AS user_sk
@@ -16,14 +16,14 @@ valn_dates AS (
   SELECT 
     DATE '2025-06-19' AS valn_date1,
     (SELECT MAX(TRUNC(valn_as_of_date)) 
-     FROM wpadbo.wpa_nws_data_load_mstr 
+     FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
      WHERE valn_as_of_date <= DATE '2025-06-19' 
        AND data_load_finished = 'TRUE') AS valn_date2
 ),
 valn_final AS (
   SELECT 
     IFF(
-      (SELECT COUNT(*) FROM wpadbo.wpa_data_load_src_strm WHERE data_load_date = (SELECT valn_date1 FROM valn_dates)) > 0,
+      (SELECT COUNT(*) FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm WHERE data_load_date = (SELECT valn_date1 FROM valn_dates)) > 0,
       (SELECT valn_date1 FROM valn_dates),
       (SELECT valn_date2 FROM valn_dates)
     ) AS valn_date
@@ -34,12 +34,13 @@ weekend_flag AS (
 ),
 last_business_day AS (
   SELECT 
-    MAX(npf_calendar_date) AS last_busn_date
-  FROM npfdbo.npf_calendar
-  WHERE npf_calendar_date BETWEEN TRUNC((SELECT valn_date FROM valn_final) - 7) AND (SELECT valn_date FROM valn_final)
+    MAX(cal.npf_calendar_date) AS last_busn_date
+  FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_calendar cal
+  CROSS JOIN valn_final
+  WHERE cal.npf_calendar_date BETWEEN DATEADD(DAY, -7, valn_final.valn_date) AND valn_final.valn_date
     AND (
-      ((5 IN (5,10)) AND is_bank_open = 'Y') OR
-      ((5 NOT IN (5,10)) AND is_market_open = 'Y')
+      ((5 IN (5,10)) AND cal.is_bank_open = 'Y') OR
+      ((5 NOT IN (5,10)) AND cal.is_market_open = 'Y')
     )
 ),
 data_src AS (
@@ -50,7 +51,7 @@ data_src AS (
     CASE 
       WHEN COALESCE(vw.src_stream_id, 0) <> 0 THEN (
         SELECT MAX(TRUNC(ms.data_load_date))
-        FROM wpadbo.wpa_data_load_src_strm ms
+        FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
         WHERE ms.data_load_finished = 'COMPLETED'
           AND ms.data_src_id = mstr.data_src_id
           AND ms.src_strm_id = vw.src_stream_id
@@ -58,21 +59,21 @@ data_src AS (
       )
       ELSE (
         SELECT MAX(TRUNC(ms.data_load_date))
-        FROM wpadbo.wpa_data_load_src_strm ms
+        FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
         WHERE ms.data_load_finished = 'COMPLETED'
           AND ms.data_src_id = mstr.data_src_id
           AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
       )
     END AS max_valn_as_of_date
-  FROM npfdbo.npf_ac_cust_user acu
-  JOIN npfdbo.npf_user usr ON acu.user_sk = usr.user_sk
-  JOIN npfdbo.npf_account ac ON acu.ac_sk = ac.ac_sk
-  JOIN npfdbo.npf_customer cust ON acu.cust_sk = cust.cust_sk
-  LEFT JOIN wpadbo.wpa_nws_data_load_mstr mstr 
+  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_cust_user acu
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_user usr ON acu.user_sk = usr.user_sk
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account ac ON acu.ac_sk = ac.ac_sk
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_customer cust ON acu.cust_sk = cust.cust_sk
+  LEFT JOIN DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr mstr 
     ON mstr.data_src_id = ac.data_src_id AND mstr.valn_as_of_date = (SELECT valn_date FROM valn_final)
-  LEFT JOIN wpadbo.wpa_data_load_src_strm mstr_strm 
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr_strm 
     ON mstr_strm.data_src_id = ac.data_src_id AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
-  LEFT JOIN npfdbo.npf_stream_ac_vw vw ON vw.ac_sk = ac.ac_sk
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_stream_ac_vw vw ON vw.ac_sk = ac.ac_sk
   WHERE usr.user_sk = (SELECT user_sk FROM user_resolved)
     AND acu.cust_sk = 1001
 ),
@@ -84,14 +85,14 @@ final_data AS (
       WHEN (SELECT is_weekend FROM weekend_flag) = 1 AND mstr.data_src_id IN (8,15) THEN
         COALESCE(
           (SELECT data_load_finished 
-           FROM wpadbo.wpa_nws_data_load_mstr 
+           FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
            WHERE data_src_id = mstr.data_src_id AND valn_as_of_date = (SELECT valn_date FROM valn_final) - 1),
           'FALSE'
         )
       WHEN (SELECT is_weekend FROM weekend_flag) = 1 THEN
         COALESCE(
           (SELECT data_load_finished 
-           FROM wpadbo.wpa_nws_data_load_mstr 
+           FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
            WHERE data_src_id = mstr.data_src_id AND valn_as_of_date = (SELECT last_busn_date FROM last_business_day)),
           'FALSE'
         )
@@ -102,7 +103,7 @@ final_data AS (
     src.dcde_desc AS data_source_name,
     src.sort_nbr AS data_source_order
   FROM data_src mstr
-  LEFT JOIN wpadbo.wpa_data_load_src_strm mstr2 
+  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr2 
     ON mstr2.data_src_id = mstr.data_src_id 
     AND mstr2.src_strm_id = mstr.src_strm_id 
     AND mstr2.data_load_date = mstr.valn_as_of_date
@@ -113,12 +114,12 @@ final_data AS (
       src.data_src_desc,
       decode.dcde_desc,
       decode.sort_nbr
-    FROM npfdbo.npf_data_src src
-    LEFT JOIN npfdbo.npf_data_src_stream strm 
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src src
+    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src_stream strm 
       ON src.data_src_id = strm.data_src_id 
       AND strm.property_type = 'REGION_SK' 
       AND strm.run_freq = 'DAILY'
-    LEFT JOIN npfdbo.npf_decode decode 
+    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_decode decode 
       ON src.data_src_id || '-' || COALESCE(strm.src_stream_id, 0) = decode.dcde_code 
       AND decode.dcde_type = 'WPA_SRC_AVAIL'
     WHERE src.data_src_id NOT IN (9,11,13,15)
