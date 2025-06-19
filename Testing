@@ -1,8 +1,31 @@
 WITH 
-gdr_flags AS (
-  SELECT 
-    IFF(get_dcde_desc('GDR_ENBL_FLG', 'GDR_GLBL') = 'Y', 'Y', 'N') AS gdr_glbl_flag,
-    IFF(get_dcde_desc('GDR_ENBL_FLG', 'DATA_SRC_AVAIL') = 'Y', 'Y', 'N') AS gdr_local_flag
+vw_stream_ac AS (
+  SELECT DISTINCT
+    strm.data_src_id,
+    CASE 
+      WHEN strm.src_stream_id = 203 THEN 204
+      WHEN strm.src_stream_id = 205 THEN 206
+      ELSE strm.src_stream_id
+    END AS src_stream_id,
+    relat.ac_sk
+  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_rgn_relat relat
+  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_rgn_mstr rgn ON relat.rgn_sk = rgn.rgn_sk
+  JOIN (
+    SELECT DISTINCT
+      CASE 
+        WHEN src_stream_id = 203 THEN 204
+        WHEN src_stream_id = 205 THEN 206
+        ELSE src_stream_id
+      END AS src_stream_id,
+      data_src_id,
+      regexp_substr(property_value, '[^,]+', 1, seq) AS rgn_sk,
+      seq
+    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src_stream,
+         TABLE(GENERATOR(ROWCOUNT => 10)) seq_tbl
+    WHERE property_type = 'REGION_SK'
+      AND regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) IS NOT NULL
+  ) strm
+    ON TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END) = rgn.rgn_sk
 ),
 user_resolved AS (
   SELECT 
@@ -73,7 +96,7 @@ data_src AS (
     ON mstr.data_src_id = ac.data_src_id AND mstr.valn_as_of_date = (SELECT valn_date FROM valn_final)
   LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr_strm 
     ON mstr_strm.data_src_id = ac.data_src_id AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
-  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_stream_ac_vw vw ON vw.ac_sk = ac.ac_sk
+  LEFT JOIN vw_stream_ac vw ON vw.ac_sk = ac.ac_sk
   WHERE usr.user_sk = (SELECT user_sk FROM user_resolved)
     AND acu.cust_sk = 1001
 ),
