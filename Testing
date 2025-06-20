@@ -1,4 +1,4 @@
--- Final Snowflake-compatible query with npf_rgn_mstr removed
+-- Wpa Data Source Status Query (Corrected)
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -18,9 +18,8 @@ vw_stream_ac AS (
         ELSE src_stream_id
       END AS src_stream_id,
       data_src_id,
-      regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) AS rgn_sk,
-      seq_tbl.ROW_NUMBER AS seq
-    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src_stream,
+      regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) AS rgn_sk
+    FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream,
          TABLE(GENERATOR(ROWCOUNT => 10)) seq_tbl
     WHERE property_type = 'REGION_SK'
       AND regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) IS NOT NULL
@@ -138,7 +137,7 @@ final_data AS (
       decode.dcde_desc,
       decode.sort_nbr
     FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src src
-    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src_stream strm 
+    LEFT JOIN DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream strm 
       ON src.data_src_id = strm.data_src_id 
       AND strm.property_type = 'REGION_SK' 
       AND strm.run_freq = 'DAILY'
