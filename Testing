@@ -114,20 +114,6 @@ precomputed_flags AS (
     ON lastbusn.data_src_id = df.data_src_id
    AND lastbusn.valn_as_of_date = lbd.last_busn_date
 ),
-      'FALSE'
-    ) AS prior_day_finished,
-    COALESCE(
-      (SELECT data_load_finished 
-       FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
-       WHERE data_src_id = df.data_src_id 
-         AND valn_as_of_date = lbd.last_busn_date),
-      'FALSE'
-    ) AS last_busn_finished
-  FROM data_src df
-  CROSS JOIN weekend_flag wf
-  CROSS JOIN last_business_day lbd
-  CROSS JOIN valn_final vd
-),
 final_data AS (
   SELECT DISTINCT 
     mstr.data_src_id,
