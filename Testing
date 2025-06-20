@@ -33,7 +33,7 @@ user_resolved AS (
 valn_dates AS (
   SELECT 
     DATE '2025-06-19' AS valn_date1,
-    (SELECT MAX(TRUNC(valn_as_of_date)) 
+    (SELECT MAX(DATE_TRUNC('DAY', valn_as_of_date)) 
      FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
      WHERE valn_as_of_date <= DATE '2025-06-19' 
        AND data_load_finished = 'TRUE') AS valn_date2
@@ -68,7 +68,7 @@ data_src AS (
     mstr.valn_as_of_date,
     CASE 
       WHEN COALESCE(vw.src_stream_id, 0) <> 0 THEN (
-        SELECT MAX(TRUNC(ms.data_load_date))
+        SELECT MAX(DATE_TRUNC('DAY', ms.data_load_date))
         FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
         WHERE ms.data_load_finished = 'COMPLETED'
           AND ms.data_src_id = mstr.data_src_id
