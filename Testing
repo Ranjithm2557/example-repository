@@ -76,7 +76,7 @@ data_src AS (
           AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
       )
       ELSE (
-        SELECT MAX(TRUNC(ms.data_load_date))
+        SELECT MAX(DATE_TRUNC('DAY', ms.data_load_date))
         FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
         WHERE ms.data_load_finished = 'COMPLETED'
           AND ms.data_src_id = mstr.data_src_id
