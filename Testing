@@ -1,4 +1,4 @@
--- Final Snowflake-compatible query with correct SEQ alias
+-- Final Snowflake-compatible query with correct use of SEQ generator
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -18,14 +18,15 @@ vw_stream_ac AS (
         ELSE src_stream_id
       END AS src_stream_id,
       data_src_id,
-      regexp_substr(property_value, '[^,]+', 1, seq) AS rgn_sk
+      regexp_substr(property_value, '[^,]+', 1, SEQ4()) AS rgn_sk
     FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream,
          TABLE(GENERATOR(ROWCOUNT => 10))
     WHERE property_type = 'REGION_SK'
-      AND regexp_substr(property_value, '[^,]+', 1, seq) IS NOT NULL
+      AND regexp_substr(property_value, '[^,]+', 1, SEQ4()) IS NOT NULL
   ) strm
     ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
 ),
+-- [rest of your original query remains unchanged below here]
 user_resolved AS (
   SELECT 
     CASE 
