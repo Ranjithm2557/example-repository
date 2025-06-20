@@ -1,161 +1,33 @@
--- Final Snowflake-compatible query with safe REGEXP_SUBSTR generator handling
-WITH 
-vw_stream_ac AS (
-  SELECT DISTINCT
-    strm.data_src_id,
-    CASE 
-      WHEN strm.src_stream_id = 203 THEN 204
-      WHEN strm.src_stream_id = 205 THEN 206
-      ELSE strm.src_stream_id
-    END AS src_stream_id,
-    relat.ac_sk
-  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_rgn_relat relat
-  JOIN (
-    SELECT DISTINCT
-      CASE 
-        WHEN src_stream_id = 203 THEN 204
-        WHEN src_stream_id = 205 THEN 206
-        ELSE src_stream_id
-      END AS src_stream_id,
-      data_src_id,
-      rgn_sk
-    FROM (
-      SELECT ds.data_src_id, ds.src_stream_id, ds.property_value,
-             regexp_substr(ds.property_value, '[^,]+', 1, gen.value) AS rgn_sk
-      FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream ds
-      JOIN LATERAL (
-        SELECT ROW_NUMBER() OVER (ORDER BY SEQ4()) AS value 
-        FROM TABLE(GENERATOR(ROWCOUNT => 10))
-      ) gen
-      WHERE ds.property_type = 'REGION_SK'
+WITH cleaned AS (
+  -- Simulate parsed CSV input as a table
+  SELECT TRIM(value) AS login_id
+  FROM TABLE(
+    FLATTEN(
+      INPUT => SPLIT(REGEXP_REPLACE('wsneed5563', '[\n\r\t ]', ''), ',')
     )
-    WHERE rgn_sk IS NOT NULL
-  ) strm
-    ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
+  )
 ),
-valn_dates AS (
-  SELECT 
-    DATE '2025-06-19' AS valn_date1,
-    (SELECT MAX(DATE_TRUNC('DAY', valn_as_of_date)) 
-     FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
-     WHERE valn_as_of_date <= DATE '2025-06-19' 
-       AND data_load_finished = 'TRUE') AS valn_date2
+valid_users AS (
+  SELECT DISTINCT u.user_sk
+  FROM npf_user u
+  JOIN cleaned c
+    ON LOWER(u.login_id) = LOWER(c.login_id)
+  WHERE u.user_type_dcde = 'XW'
 ),
-valn_final AS (
-  SELECT 
-    IFF(
-      (SELECT COUNT(*) FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm 
-       WHERE data_load_date = (SELECT valn_date1 FROM valn_dates)) > 0,
-      (SELECT valn_date1 FROM valn_dates),
-      (SELECT valn_date2 FROM valn_dates)
-    ) AS valn_date
-),
-weekend_flag AS (
-  SELECT 
-    IFF(DAYNAME((SELECT valn_date FROM valn_final)) IN ('SATURDAY', 'SUNDAY'), 1, 0) AS is_weekend
-),
-last_business_day AS (
-  SELECT 
-    MAX(cal.npf_calendar_date) AS last_busn_date
-  FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_calendar cal
-  CROSS JOIN valn_final
-  WHERE cal.npf_calendar_date BETWEEN DATEADD(DAY, -7, valn_final.valn_date) AND valn_final.valn_date
-    AND (
-      ((5 IN (5,10)) AND cal.is_bank_open = 'Y') OR
-      ((5 NOT IN (5,10)) AND cal.is_market_open = 'Y')
-    )
-),
-data_src AS (
-  SELECT 
-    ac.data_src_id,
-    COALESCE(vw.src_stream_id, 0) AS src_stream_id,
-    mstr.valn_as_of_date,
-    CASE 
-      WHEN COALESCE(vw.src_stream_id, 0) <> 0 THEN (
-        SELECT MAX(DATE_TRUNC('DAY', ms.data_load_date))
-        FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
-        WHERE ms.data_load_finished = 'COMPLETED'
-          AND ms.data_src_id = mstr.data_src_id
-          AND ms.src_strm_id = vw.src_stream_id
-          AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
-      )
-      ELSE (
-        SELECT MAX(DATE_TRUNC('DAY', ms.data_load_date))
-        FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
-        WHERE ms.data_load_finished = 'COMPLETED'
-          AND ms.data_src_id = mstr.data_src_id
-          AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
-      )
-    END AS max_valn_as_of_date
-  FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_ac_cust_user acu
-  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_user usr ON acu.user_sk = usr.user_sk
-  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account ac ON acu.ac_sk = ac.ac_sk
-  JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_customer cust ON acu.cust_sk = cust.cust_sk
-  LEFT JOIN DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr mstr 
-    ON mstr.data_src_id = ac.data_src_id AND mstr.valn_as_of_date = (SELECT valn_date FROM valn_final)
-  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr_strm 
-    ON mstr_strm.data_src_id = ac.data_src_id AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
-  LEFT JOIN vw_stream_ac vw ON vw.ac_sk = ac.ac_sk
-  WHERE usr.user_sk = 446024
-    AND acu.cust_sk = 102135
-),
-precomputed_flags AS (
+result AS (
   SELECT
-    df.data_src_id,
-    wf.is_weekend,
-    lbd.last_busn_date,
-    vd.valn_date,
-    COALESCE(prior.data_load_finished, 'FALSE') AS prior_day_finished,
-    COALESCE(lastbusn.data_load_finished, 'FALSE') AS last_busn_finished
-  FROM data_src df
-  CROSS JOIN weekend_flag wf
-  CROSS JOIN last_business_day lbd
-  CROSS JOIN valn_final vd
-  LEFT JOIN DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr prior
-    ON prior.data_src_id = df.data_src_id
-   AND prior.valn_as_of_date = vd.valn_date - 1
-  LEFT JOIN DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr lastbusn
-    ON lastbusn.data_src_id = df.data_src_id
-   AND lastbusn.valn_as_of_date = lbd.last_busn_date
-),
-final_data AS (
-  SELECT DISTINCT 
-    mstr.data_src_id,
-    src.data_src_desc,
-    CASE
-      WHEN flags.is_weekend = 1 AND mstr.data_src_id IN (8,15) THEN flags.prior_day_finished
-      WHEN flags.is_weekend = 1 THEN flags.last_busn_finished
-      ELSE COALESCE(mstr2.data_load_finished, 'FALSE')
-    END AS dataload_finished,
-    mstr.valn_as_of_date,
-    mstr.max_valn_as_of_date,
-    src.dcde_desc AS data_source_name,
-    src.sort_nbr AS data_source_order
-  FROM data_src mstr
-  JOIN precomputed_flags flags ON flags.data_src_id = mstr.data_src_id
-  LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr2 
-    ON mstr2.data_src_id = mstr.data_src_id 
-    AND mstr2.src_strm_id = mstr.src_stream_id 
-    AND mstr2.data_load_date = mstr.valn_as_of_date
-  INNER JOIN (
-    SELECT 
-      src.data_src_id,
-      COALESCE(strm.src_stream_id, 0) AS src_stream_id,
-      src.data_src_desc,
-      decode.dcde_desc,
-      decode.sort_nbr
-    FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_data_src src
-    LEFT JOIN DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream strm 
-      ON src.data_src_id = strm.data_src_id 
-      AND strm.property_type = 'REGION_SK' 
-      AND strm.run_freq = 'DAILY'
-    LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_decode decode 
-      ON src.data_src_id || '-' || COALESCE(strm.src_stream_id, 0) = decode.dcde_code 
-      AND decode.dcde_type = 'WPA_SRC_AVAIL'
-    WHERE src.data_src_id NOT IN (9,11,13,15)
-  ) src 
-    ON mstr.data_src_id = src.data_src_id AND mstr.src_stream_id = src.src_stream_id
+    45 AS ssp_id,
+    'Wealth maintenance' AS ssp_desc,
+    1 AS cmnty_id,
+    TO_DATE('2014-03-06', 'YYYY-MM-DD') AS ssp_start_date,
+    TO_DATE('2014-03-09', 'YYYY-MM-DD') AS ssp_end_date,
+    NULL AS ssp_msg_url,
+    'Due to scheduled maintenance, Wealth Passport will not be available from Saturday, March 08, 2014 7:00 PM CT through Sunday, March 09, 2014 4:00 AM CT. For more information on this outage, please contact the Passport Help Center at (888) 635-5350' AS ssp_msg_text_clob,
+    'WPAPROC' AS creat_by,
+    'WPAPROC' AS update_by,
+    vu.user_sk AS user_sk
+  FROM valid_users vu
 )
 SELECT *
-FROM final_data
-ORDER BY data_source_order;
+FROM result
+ORDER BY user_sk;
