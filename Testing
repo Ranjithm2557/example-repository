@@ -1,4 +1,4 @@
--- Final Snowflake-compatible query with corrected src_stream_id reference and SEQ usage
+-- Final Snowflake-compatible query with safe REGEXP_SUBSTR generator handling
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -13,16 +13,20 @@ vw_stream_ac AS (
   JOIN (
     SELECT DISTINCT
       CASE 
-        WHEN ds.src_stream_id = 203 THEN 204
-        WHEN ds.src_stream_id = 205 THEN 206
-        ELSE ds.src_stream_id
+        WHEN src_stream_id = 203 THEN 204
+        WHEN src_stream_id = 205 THEN 206
+        ELSE src_stream_id
       END AS src_stream_id,
-      ds.data_src_id,
-      regexp_substr(ds.property_value, '[^,]+', 1, seq4()) AS rgn_sk
-    FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream ds,
-         TABLE(GENERATOR(ROWCOUNT => 10))
-    WHERE ds.property_type = 'REGION_SK'
-      AND regexp_substr(ds.property_value, '[^,]+', 1, seq4()) IS NOT NULL
+      data_src_id,
+      rgn_sk
+    FROM (
+      SELECT ds.data_src_id, ds.src_stream_id, ds.property_value,
+             regexp_substr(ds.property_value, '[^,]+', 1, gen.seq) AS rgn_sk
+      FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream ds
+      JOIN TABLE(GENERATOR(ROWCOUNT => 10)) gen
+      WHERE ds.property_type = 'REGION_SK'
+    )
+    WHERE rgn_sk IS NOT NULL
   ) strm
     ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
 ),
@@ -85,11 +89,9 @@ data_src AS (
   JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_account ac ON acu.ac_sk = ac.ac_sk
   JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.npf_customer cust ON acu.cust_sk = cust.cust_sk
   LEFT JOIN DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr mstr 
-    ON mstr.data_src_id = ac.data_src_id 
-    AND mstr.valn_as_of_date = (SELECT valn_date FROM valn_final)
+    ON mstr.data_src_id = ac.data_src_id AND mstr.valn_as_of_date = (SELECT valn_date FROM valn_final)
   LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr_strm 
-    ON mstr_strm.data_src_id = ac.data_src_id 
-    AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
+    ON mstr_strm.data_src_id = ac.data_src_id AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
   LEFT JOIN vw_stream_ac vw ON vw.ac_sk = ac.ac_sk
   WHERE usr.user_sk = 446024
     AND acu.cust_sk = 102135
@@ -149,8 +151,7 @@ final_data AS (
       AND decode.dcde_type = 'WPA_SRC_AVAIL'
     WHERE src.data_src_id NOT IN (9,11,13,15)
   ) src 
-    ON mstr.data_src_id = src.data_src_id 
-   AND mstr.src_stream_id = src.src_stream_id
+    ON mstr.data_src_id = src.data_src_id AND mstr.src_stream_id = src.src_stream_id
 )
 SELECT *
 FROM final_data
