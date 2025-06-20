@@ -101,11 +101,19 @@ precomputed_flags AS (
     wf.is_weekend,
     lbd.last_busn_date,
     vd.valn_date,
-    COALESCE(
-      (SELECT data_load_finished 
-       FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
-       WHERE data_src_id = df.data_src_id 
-         AND valn_as_of_date = vd.valn_date - 1),
+    COALESCE(prior.data_load_finished, 'FALSE') AS prior_day_finished,
+    COALESCE(lastbusn.data_load_finished, 'FALSE') AS last_busn_finished
+  FROM data_src df
+  CROSS JOIN weekend_flag wf
+  CROSS JOIN last_business_day lbd
+  CROSS JOIN valn_final vd
+  LEFT JOIN DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr prior
+    ON prior.data_src_id = df.data_src_id
+   AND prior.valn_as_of_date = vd.valn_date - 1
+  LEFT JOIN DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr lastbusn
+    ON lastbusn.data_src_id = df.data_src_id
+   AND lastbusn.valn_as_of_date = lbd.last_busn_date
+),
       'FALSE'
     ) AS prior_day_finished,
     COALESCE(
