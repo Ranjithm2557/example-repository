@@ -1,4 +1,4 @@
--- Final Snowflake-compatible query with correct use of SEQ generator
+-- Final Snowflake-compatible query with correct use of SEQ generator and working cust_sk/user_sk
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -25,10 +25,6 @@ vw_stream_ac AS (
       AND regexp_substr(ds.property_value, '[^,]+', 1, SEQ4()) IS NOT NULL
   ) strm
     ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
-),
--- [rest of your original query remains unchanged below here]
-user_resolved AS (
-  SELECT 446024 AS user_sk
 ),
 valn_dates AS (
   SELECT 
@@ -92,7 +88,7 @@ data_src AS (
   LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr_strm 
     ON mstr_strm.data_src_id = ac.data_src_id AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
   LEFT JOIN vw_stream_ac vw ON vw.ac_sk = ac.ac_sk
-  WHERE usr.user_sk = (SELECT user_sk FROM user_resolved)
+  WHERE usr.user_sk = 446024
     AND acu.cust_sk = 102135
 ),
 precomputed_flags AS (
