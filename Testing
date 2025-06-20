@@ -1,4 +1,3 @@
--- Final Snowflake-compatible query with correct use of SEQ generator and working cust_sk/user_sk
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -18,11 +17,11 @@ vw_stream_ac AS (
         ELSE ds.src_stream_id
       END AS src_stream_id,
       ds.data_src_id,
-      regexp_substr(ds.property_value, '[^,]+', 1, SEQ4()) AS rgn_sk
-    FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream ds
-    JOIN TABLE(GENERATOR(ROWCOUNT => 10))
+      regexp_substr(ds.property_value, '[^,]+', 1, seq.seq) AS rgn_sk
+    FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream ds,
+         TABLE(GENERATOR(ROWCOUNT => 10)) seq
     WHERE ds.property_type = 'REGION_SK'
-      AND regexp_substr(ds.property_value, '[^,]+', 1, SEQ4()) IS NOT NULL
+      AND regexp_substr(ds.property_value, '[^,]+', 1, seq.seq) IS NOT NULL
   ) strm
     ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
 ),
@@ -68,7 +67,7 @@ data_src AS (
         FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
         WHERE ms.data_load_finished = 'COMPLETED'
           AND ms.data_src_id = mstr.data_src_id
-          AND ms.src_strm_id = vw.src_stream_id
+          AND ms.src_strm_id = vw.src_strm_id
           AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
       )
       ELSE (
