@@ -1,3 +1,4 @@
+-- Final Snowflake-compatible query with corrected src_stream_id reference and SEQ usage
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -60,7 +61,7 @@ last_business_day AS (
 data_src AS (
   SELECT 
     ac.data_src_id,
-    COALESCE(vw.src_stream_id, 0) AS src_strm_id,
+    COALESCE(vw.src_stream_id, 0) AS src_stream_id,
     mstr.valn_as_of_date,
     CASE 
       WHEN COALESCE(vw.src_stream_id, 0) <> 0 THEN (
@@ -68,7 +69,7 @@ data_src AS (
         FROM DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm ms
         WHERE ms.data_load_finished = 'COMPLETED'
           AND ms.data_src_id = mstr.data_src_id
-          AND ms.src_strm_id = vw.src_strm_id
+          AND ms.src_strm_id = vw.src_stream_id
           AND ms.data_load_date <= (SELECT valn_date FROM valn_final)
       )
       ELSE (
@@ -129,7 +130,7 @@ final_data AS (
   JOIN precomputed_flags flags ON flags.data_src_id = mstr.data_src_id
   LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr2 
     ON mstr2.data_src_id = mstr.data_src_id 
-    AND mstr2.src_strm_id = mstr.src_strm_id 
+    AND mstr2.src_strm_id = mstr.src_stream_id 
     AND mstr2.data_load_date = mstr.valn_as_of_date
   INNER JOIN (
     SELECT 
@@ -149,7 +150,7 @@ final_data AS (
     WHERE src.data_src_id NOT IN (9,11,13,15)
   ) src 
     ON mstr.data_src_id = src.data_src_id 
-   AND mstr.src_strm_id = src.src_stream_id
+   AND mstr.src_stream_id = src.src_stream_id
 )
 SELECT *
 FROM final_data
