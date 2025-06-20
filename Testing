@@ -21,9 +21,12 @@ vw_stream_ac AS (
       rgn_sk
     FROM (
       SELECT ds.data_src_id, ds.src_stream_id, ds.property_value,
-             regexp_substr(ds.property_value, '[^,]+', 1, gen.seq) AS rgn_sk
+             regexp_substr(ds.property_value, '[^,]+', 1, gen.value) AS rgn_sk
       FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream ds
-      JOIN TABLE(GENERATOR(ROWCOUNT => 10)) gen
+      JOIN LATERAL (
+        SELECT ROW_NUMBER() OVER () AS value 
+        FROM TABLE(GENERATOR(ROWCOUNT => 10))
+      ) gen
       WHERE ds.property_type = 'REGION_SK'
     )
     WHERE rgn_sk IS NOT NULL
