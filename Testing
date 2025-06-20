@@ -1,4 +1,4 @@
--- Wpa Data Source Status Query (Corrected)
+-- Final Snowflake-compatible query with corrected SEQ_TBL reference
 WITH 
 vw_stream_ac AS (
   SELECT DISTINCT
@@ -18,11 +18,11 @@ vw_stream_ac AS (
         ELSE src_stream_id
       END AS src_stream_id,
       data_src_id,
-      regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) AS rgn_sk
+      regexp_substr(property_value, '[^,]+', 1, seq_tbl.seq) AS rgn_sk
     FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream,
          TABLE(GENERATOR(ROWCOUNT => 10)) seq_tbl
     WHERE property_type = 'REGION_SK'
-      AND regexp_substr(property_value, '[^,]+', 1, seq_tbl.ROW_NUMBER) IS NOT NULL
+      AND regexp_substr(property_value, '[^,]+', 1, seq_tbl.seq) IS NOT NULL
   ) strm
     ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
 ),
