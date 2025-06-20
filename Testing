@@ -28,7 +28,7 @@ vw_stream_ac AS (
 ),
 -- [rest of your original query remains unchanged below here]
 user_resolved AS (
-  SELECT 101299 AS user_sk
+  SELECT 446024 AS user_sk
 ),
 valn_dates AS (
   SELECT 
@@ -93,7 +93,7 @@ data_src AS (
     ON mstr_strm.data_src_id = ac.data_src_id AND mstr_strm.data_load_date = (SELECT valn_date FROM valn_final)
   LEFT JOIN vw_stream_ac vw ON vw.ac_sk = ac.ac_sk
   WHERE usr.user_sk = (SELECT user_sk FROM user_resolved)
-    AND acu.cust_sk = 1001
+    AND acu.cust_sk = 102135
 ),
 precomputed_flags AS (
   SELECT
