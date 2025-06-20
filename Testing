@@ -28,12 +28,7 @@ vw_stream_ac AS (
 ),
 -- [rest of your original query remains unchanged below here]
 user_resolved AS (
-  SELECT 
-    CASE 
-      WHEN (SELECT user_type_dcde FROM DEV_ANCHOR_ANALYTICS.WP_SRC.npf_user WHERE user_sk = 101299) = 'IN' 
-        THEN get_generic_id(101299, 1001)
-      ELSE 101299
-    END AS user_sk
+  SELECT 101299 AS user_sk
 ),
 valn_dates AS (
   SELECT 
