@@ -22,7 +22,7 @@ vw_stream_ac AS (
     FROM DEV_WPA_ACCOUNTS_DB.CORE.npf_data_src_stream ds
     JOIN TABLE(GENERATOR(ROWCOUNT => 10))
     WHERE ds.property_type = 'REGION_SK'
-      AND regexp_substr(ds.property_value, '[^,]+', 1, seq.seq4) IS NOT NULL
+      AND regexp_substr(ds.property_value, '[^,]+', 1, SEQ4()) IS NOT NULL
   ) strm
     ON relat.rgn_sk = TO_NUMBER(CASE WHEN strm.rgn_sk = 'ALL' THEN 0 ELSE strm.rgn_sk END)
 ),
