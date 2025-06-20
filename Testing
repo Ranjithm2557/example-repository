@@ -95,25 +95,38 @@ data_src AS (
   WHERE usr.user_sk = (SELECT user_sk FROM user_resolved)
     AND acu.cust_sk = 1001
 ),
+precomputed_flags AS (
+  SELECT
+    df.data_src_id,
+    wf.is_weekend,
+    lbd.last_busn_date,
+    vd.valn_date,
+    COALESCE(
+      (SELECT data_load_finished 
+       FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
+       WHERE data_src_id = df.data_src_id 
+         AND valn_as_of_date = vd.valn_date - 1),
+      'FALSE'
+    ) AS prior_day_finished,
+    COALESCE(
+      (SELECT data_load_finished 
+       FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
+       WHERE data_src_id = df.data_src_id 
+         AND valn_as_of_date = lbd.last_busn_date),
+      'FALSE'
+    ) AS last_busn_finished
+  FROM data_src df
+  CROSS JOIN weekend_flag wf
+  CROSS JOIN last_business_day lbd
+  CROSS JOIN valn_final vd
+),
 final_data AS (
   SELECT DISTINCT 
     mstr.data_src_id,
     src.data_src_desc,
     CASE
-      WHEN (SELECT is_weekend FROM weekend_flag) = 1 AND mstr.data_src_id IN (8,15) THEN
-        COALESCE(
-          (SELECT data_load_finished 
-           FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
-           WHERE data_src_id = mstr.data_src_id AND valn_as_of_date = (SELECT valn_date FROM valn_final) - 1),
-          'FALSE'
-        )
-      WHEN (SELECT is_weekend FROM weekend_flag) = 1 THEN
-        COALESCE(
-          (SELECT data_load_finished 
-           FROM DEV_NPF_DB.CDC_DIRECT.wpa_nws_data_load_mstr 
-           WHERE data_src_id = mstr.data_src_id AND valn_as_of_date = (SELECT last_busn_date FROM last_business_day)),
-          'FALSE'
-        )
+      WHEN flags.is_weekend = 1 AND mstr.data_src_id IN (8,15) THEN flags.prior_day_finished
+      WHEN flags.is_weekend = 1 THEN flags.last_busn_finished
       ELSE COALESCE(mstr2.data_load_finished, 'FALSE')
     END AS dataload_finished,
     mstr.valn_as_of_date,
@@ -121,6 +134,7 @@ final_data AS (
     src.dcde_desc AS data_source_name,
     src.sort_nbr AS data_source_order
   FROM data_src mstr
+  JOIN precomputed_flags flags ON flags.data_src_id = mstr.data_src_id
   LEFT JOIN DEV_ANCHOR_ANALYTICS.WP_SRC.wpa_data_load_src_strm mstr2 
     ON mstr2.data_src_id = mstr.data_src_id 
     AND mstr2.src_strm_id = mstr.src_strm_id 
@@ -141,7 +155,8 @@ final_data AS (
       ON src.data_src_id || '-' || COALESCE(strm.src_stream_id, 0) = decode.dcde_code 
       AND decode.dcde_type = 'WPA_SRC_AVAIL'
     WHERE src.data_src_id NOT IN (9,11,13,15)
-  ) src ON mstr.data_src_id = src.data_src_id AND mstr.src_strm_id = src.src_stream_id
+  ) src 
+    ON mstr.data_src_id = src.data_src_id AND mstr.src_strm_id = src.src_stream_id
 )
 SELECT *
 FROM final_data
